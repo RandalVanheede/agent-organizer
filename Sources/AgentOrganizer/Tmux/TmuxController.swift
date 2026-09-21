@@ -99,6 +99,14 @@ final class TmuxController {
         return map
     }
 
+    /// Session owning a pane id such as "%7" (a hook's `TMUX_PANE`).
+    func sessionName(forPane paneID: String) -> String? {
+        let (status, output) = run(["display-message", "-p", "-t", paneID, "#{session_name}"])
+        guard status == 0 else { return nil }
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     /// The working directory a session's active pane currently sits in.
     /// Used to guess which folder an untracked ("orphan") session belongs to.
     func paneCurrentPath(session: String) -> String? {

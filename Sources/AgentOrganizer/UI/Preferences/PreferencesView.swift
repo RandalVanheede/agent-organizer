@@ -16,10 +16,35 @@ struct PreferencesView: View {
 
 private struct GeneralPreferencesView: View {
     @Environment(AppState.self) private var appState
+    @State private var hooksInstalled = HookInstaller.isInstalled()
+    @State private var hookError: String?
 
     var body: some View {
         let store = appState.store
         Form {
+            Section("Notifications") {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(hooksInstalled ? "Claude Code hooks installed" : "Claude Code hooks not installed")
+                        Text("Adds Notification / Stop / UserPromptSubmit hooks to ~/.claude/settings.json (a backup is kept). Agents then flag the tab, badge the Dock, and post a notification when they need you. Only fires for claude sessions started from this app.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button(hooksInstalled ? "Uninstall" : "Install") {
+                        do {
+                            if hooksInstalled { try HookInstaller.uninstall() } else { try HookInstaller.install() }
+                            hookError = nil
+                        } catch {
+                            hookError = error.localizedDescription
+                        }
+                        hooksInstalled = HookInstaller.isInstalled()
+                    }
+                }
+                if let hookError {
+                    Text(hookError).font(.caption).foregroundStyle(.red)
+                }
+            }
             Section("Sessions") {
                 Toggle("Kill all agents when Agent Organizer quits", isOn: Binding(
                     get: { store.killAgentsOnQuit },

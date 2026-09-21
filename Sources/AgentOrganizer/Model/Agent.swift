@@ -3,7 +3,14 @@ import Foundation
 /// Live status of an agent's tmux session, refreshed by polling `has-session`
 /// (cheap: a single local socket round-trip) — never by tearing anything down.
 enum AgentStatus: Equatable {
+    /// Tool is producing output (activity within the last couple of seconds).
     case running
+    /// Tool is up but quiet — most likely waiting for the user. Also forced
+    /// by a Claude Code `Notification`/`Stop` hook until the tab is viewed.
+    case waiting
+    /// Nothing but the login shell is running in the pane.
+    case idle
+    /// The tmux session is gone.
     case exited
     case unknown
 }

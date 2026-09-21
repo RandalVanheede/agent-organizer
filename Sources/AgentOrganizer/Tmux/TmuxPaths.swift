@@ -3,7 +3,16 @@ import Foundation
 /// Locates the `tmux` binary and this app's dedicated socket/config, without
 /// ever touching the user's own tmux server or config.
 struct TmuxPaths {
+    /// The statically-linked tmux shipped in the app bundle (see
+    /// scripts/build-tmux.sh). Preferred so users need no Homebrew.
+    static var bundledTmux: String? {
+        guard let url = Bundle.main.resourceURL?.appendingPathComponent("bin/tmux"),
+              FileManager.default.isExecutableFile(atPath: url.path) else { return nil }
+        return url.path
+    }
+
     static func resolveTmuxBinary() -> String? {
+        if let bundled = bundledTmux { return bundled }
         let candidates = ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/usr/bin/tmux"]
         for path in candidates where FileManager.default.isExecutableFile(atPath: path) {
             return path

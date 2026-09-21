@@ -18,7 +18,7 @@ macOS desktop app. Sidebar of **folders** (A‑Z). Per folder, N **agents** (int
 | UI shell | SwiftUI (`NavigationSplitView`, `List`, `@Observable`) | small code, native look |
 | Terminal hosting | AppKit `NSView` via `NSViewRepresentable` | keep terminal views alive across selection changes |
 | Terminal emulator | [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) (`LocalProcessTerminalView`), MIT, pure Swift | mature VT emulator, pty spawn built in, no C deps |
-| Session persistence | **tmux** (Homebrew), dedicated server: `tmux -S "~/Library/Application Support/Agent Organizer/tmux.sock" -f <bundled tmux.conf>` | detach/attach for free, battle‑tested; own socket + config = zero interference with user's tmux |
+| Session persistence | **tmux 3.7c, bundled** (static build, Homebrew fallback), dedicated server: `tmux -S "~/Library/Application Support/Agent Organizer/tmux.sock" -f <bundled tmux.conf>` | detach/attach for free, battle‑tested; own socket + config = zero interference with user's tmux |
 | Status/events | tmux **control mode** (`tmux -C attach`) — one long‑lived client, push events, no polling | how iTerm2 does it |
 | Persistence | Codable JSON at `~/Library/Application Support/Agent Organizer/state.json` | trivial, no SwiftData/CoreData overhead |
 | Filesystem watch | `DispatchSource.makeFileSystemObjectSource` on folder + `.git/HEAD` | cheap, no FSEvents stream needed |
@@ -175,19 +175,22 @@ Dependency: `brew install tmux` (app detects and guides). Later option: bundle a
 
 | # | Scope | Status |
 |---|---|---|
-| M0 | SwiftPM skeleton, Makefile, `.app` launches with menu bar & window | ✅ Done |
-| M1 | Folders: add (multi), remove, A‑Z sidebar, JSON persistence, folder kind detection | ✅ Done |
-| M2 | Agents: SwiftTerm + tmux attach, presets (claude/opencode/shell), new/kill, reconcile on launch, tmux‑missing onboarding | ✅ Done — verified sessions survive app quit |
-| M3 | Sub‑repo scan, cwd picker, cwd badges, folder watch/rescan | ✅ Done — `FolderWatcher` debounced rescan on dir + `.git/HEAD` changes |
-| M4 | Control mode: status, live titles, death detection | ✅ Done (status is binary running/exited, not yet running/waiting/idle — see below). Restart (`--continue`) shipped in M2's Commands. `TmuxControlModeClient` replaces polling as the primary path; a 10s poll remains a fallback only |
-| M5 | Polish: shortcuts, rename, git branch display, quit‑behaviour preference, reorder, presets/font preferences | ✅ Done — drag-to-reorder within a folder; Preferences has a font-size stepper (applied live) and a Tools tab to add/edit/remove presets |
-| M6 | Optional: split view, detach agent to own window, notifications via Claude hooks, dock badge, orphan-session surfacing | Split view and orphan-session surfacing shipped (both found to matter during real use). Detach-to-own-window / Claude-hook notifications / dock badge not built — still optional |
+| M0 | SwiftPM skeleton, Makefile, `.app` launches | ✅ |
+| M1 | Folders: add (multi), remove, A‑Z sidebar, JSON persistence, kind detection | ✅ |
+| M2 | Agents: SwiftTerm + tmux attach, presets, new/kill, reconcile on launch, onboarding | ✅ sessions survive app quit |
+| M3 | Sub‑repo scan, cwd picker, badges, folder watch/rescan | ✅ |
+| M4 | Control mode: death detection, live titles, **three‑way status** (running / waiting / idle) via a `refresh-client -B` format subscription over `#{S:…}` (all sessions, pushed on change) | ✅ |
+| M5 | Polish: shortcuts, rename, reorder, branch display, preferences (font, tools, quit behaviour) | ✅ |
+| M6 | Split view · orphan sessions · **Claude Code hook notifications + Dock badge** · **bundled static tmux** · **app icon** · ⌘W kills agent | ✅ (detach‑to‑window not built — no one asked) |
 
-Known gaps, not yet addressed:
-- Status is binary (green=session alive, red=session gone), not the three-way running/waiting/idle distinction sketched in §6 — that needs per-pane output-activity tracking, which tmux control mode only reports for the session a client is *attached* to, not server-wide. Would need one control-mode client per agent (or per visible agent) rather than one shared client; deferred as a real cost/benefit call, not an oversight.
-- No detach-to-own-window, no Claude-hook-driven notifications/dock badge.
-- tmux is a Homebrew dependency; not yet bundled statically.
-- Interactive UI click-through (drag reorder, split-view toggle, presets editor) is verified by accessibility-tree reads and direct tmux-level checks, not by simulated clicks — this environment's accessibility permissions allow read-only introspection but not reliable click automation. Worth a manual pass.
+### Status model (M4)
+`exited` = session gone · `idle` = pane runs only a shell · `running` = tool output in last 2.5 s · `waiting` = tool up but quiet, or a Claude hook (`Notification`/`Stop`) flagged it until the tab is viewed. Snapshot comes from the control client's subscription (`session|pane_id|pane_current_command|window_activity`); a 1 s in‑memory recompute decays running→waiting. Claude Code reports its *version* as `pane_current_command` (e.g. `2.1.278`) — anything not in the shell list counts as a tool.
+
+### Hooks (M6)
+Preferences › Install writes `~/Library/Application Support/Agent Organizer/bin/ao-hook` and merges `Notification`/`Stop`/`UserPromptSubmit` entries into `~/.claude/settings.json` (backup kept). The script no‑ops unless `$TMUX` is our socket, then drops a JSON file in `…/events/`; `HookEventWatcher` (DispatchSource) maps `TMUX_PANE` → session → agent, flags attention (orange dot, Dock badge count), posts a `UNUserNotification` (click → jumps to the tab). Viewing the tab or a new prompt clears it.
+
+### Bundled tmux (M6)
+`scripts/build-tmux.sh` builds tmux 3.7c with static libevent + ncursesw → `Resources/bin/tmux` (deps: libSystem, libresolv only). `TmuxPaths` prefers it over Homebrew. Same version as brew's, so an already‑running server is compatible.
 
 ## 11. Risks / open points
 

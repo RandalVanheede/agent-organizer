@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import Observation
+import UserNotifications
 
 /// Top-level app state: owns the persisted `Store`, the tmux connection, the
 /// terminal view cache, and current UI selection. `tmux` is optional because
@@ -23,6 +24,7 @@ final class AppState {
     let cache = TerminalCache()
     private let controlClient = TmuxControlModeClient()
     private let watcher = FolderWatcher()
+    private let hookWatcher = HookEventWatcher()
 
     /// Sidebar selection: folders behave like vertical tabs.
     private(set) var selectedFolderID: Folder.ID?
@@ -48,7 +50,15 @@ final class AppState {
     /// renames), overridden by a user-set `Agent.title` when present.
     var liveTitles: [String: String] = [:]
     var orphanSessions: [OrphanSession] = []
+    /// Agents a Claude Code hook flagged as needing the user (Notification /
+    /// Stop). Cleared when the tab is viewed. Drives the dock badge.
+    var attention: Set<Agent.ID> = []
     private var statusTimer: Timer?
+    private var recomputeTimer: Timer?
+    /// Shells: a pane running only one of these is "idle".
+    private static let shellCommands: Set<String> = ["zsh", "bash", "fish", "sh", "dash", "tcsh", "ksh", "nu", "login", "-zsh", "-bash"]
+    /// Output within this window counts as "running".
+    private static let runningWindow: TimeInterval = 2.5
 
     init() {
         tmux = TmuxController()
@@ -56,7 +66,50 @@ final class AppState {
         wireControlClient()
         for folder in store.folders { watcher.watch(folder) }
         watcher.onChange = { [weak self] id in self?.handleFolderChanged(id) }
+        hookWatcher.onEvent = { [weak self] event in self?.handleHookEvent(event) }
+        hookWatcher.start()
         restoreUISelection()
+    }
+
+    // MARK: Claude Code hooks → attention + system notifications
+
+    private func handleHookEvent(_ event: HookEventWatcher.Event) {
+        let session = sessionName(forPaneID: event.pane) ?? tmux?.sessionName(forPane: event.pane)
+        guard let session, let agent = store.agents.first(where: { $0.tmuxSession == session }) else { return }
+
+        switch event.name {
+        case "UserPromptSubmit":
+            clearAttention(agent.id)
+        case "Notification", "Stop":
+            let isOnScreen = NSApp.isActive && selectedAgent?.id == agent.id
+            if !isOnScreen { flagAttention(agent.id) }
+            let folderName = store.folder(agent.folderID)?.displayName ?? ""
+            let title = agent.title ?? liveTitle(for: agent) ?? store.preset(for: agent.presetID).name
+            postNotification(
+                agentID: agent.id,
+                title: folderName.isEmpty ? title : "\(title) — \(folderName)",
+                body: event.message ?? (event.name == "Stop" ? "Finished — waiting for your next prompt." : "Needs your input.")
+            )
+        default:
+            break
+        }
+    }
+
+    private func postNotification(agentID: Agent.ID, title: String, body: String) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        content.userInfo = ["agentID": agentID.uuidString]
+        let request = UNNotificationRequest(identifier: "agent-\(agentID.uuidString)", content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request)
+    }
+
+    /// From a notification click: jump to that agent.
+    func selectAgent(id: Agent.ID) {
+        guard let agent = store.agents.first(where: { $0.id == id }) else { return }
+        selectAgent(agent)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func restoreUISelection() {
@@ -87,7 +140,18 @@ final class AppState {
         selectedFolderID = agent.folderID
         activeAgentByFolder[agent.folderID] = agent.id
         if splitAgentID == agent.id { splitAgentID = nil }
+        clearAttention(agent.id)
         persistUISelection()
+    }
+
+    /// ⇧⌘] / ⇧⌘[ — cycle tabs within the selected folder.
+    func selectAdjacentAgent(by offset: Int) {
+        guard let folder = selectedFolder else { return }
+        let agents = store.agents(in: folder.id)
+        guard !agents.isEmpty else { return }
+        let idx = selectedAgent.flatMap { a in agents.firstIndex { $0.id == a.id } } ?? 0
+        let next = ((idx + offset) % agents.count + agents.count) % agents.count
+        selectAgent(agents[next])
     }
 
     private func wireControlClient() {
@@ -99,6 +163,9 @@ final class AppState {
         controlClient.onTitleChanged = { [weak self] sessionName, title in
             self?.liveTitles[sessionName] = title
         }
+        controlClient.onPanesChanged = { [weak self] in
+            self?.recomputeStatuses()
+        }
     }
 
     func startStatusPolling() {
@@ -109,15 +176,76 @@ final class AppState {
         statusTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refreshStatuses() }
         }
+        // "running" decays to "waiting" with no new event, so re-evaluate
+        // the in-memory snapshot every second (no process spawn involved).
+        recomputeTimer?.invalidate()
+        recomputeTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.recomputeStatuses() }
+        }
     }
+
+    private var liveSessions: Set<String> = []
 
     func refreshStatuses() {
         guard let tmux else { return }
-        let live = tmux.listSessions()
+        liveSessions = tmux.listSessions()
+        refreshOrphans(live: liveSessions)
+        recomputeStatuses()
+    }
+
+    /// Three-way status from the control-mode pane snapshot:
+    /// exited (session gone) / idle (only a shell) / running (recent output)
+    /// / waiting (tool up but quiet, or a hook said it needs you).
+    func recomputeStatuses() {
+        let now = Date().timeIntervalSince1970
+        var changed = false
         for agent in store.agents {
-            agentStatuses[agent.id] = live.contains(agent.tmuxSession) ? .running : .exited
+            let new: AgentStatus
+            if !liveSessions.isEmpty && !liveSessions.contains(agent.tmuxSession) {
+                new = .exited
+            } else if let pane = controlClient.panes[agent.tmuxSession] {
+                if Self.shellCommands.contains(pane.command) {
+                    new = .idle
+                } else if attention.contains(agent.id) {
+                    new = .waiting
+                } else if now - pane.activity <= Self.runningWindow {
+                    new = .running
+                } else {
+                    new = .waiting
+                }
+            } else if liveSessions.contains(agent.tmuxSession) {
+                new = .unknown
+            } else {
+                continue
+            }
+            if agentStatuses[agent.id] != new {
+                agentStatuses[agent.id] = new
+                changed = true
+            }
         }
-        refreshOrphans(live: live)
+        _ = changed
+    }
+
+    // MARK: Attention (hooks) & dock badge
+
+    func flagAttention(_ agentID: Agent.ID) {
+        attention.insert(agentID)
+        recomputeStatuses()
+        updateDockBadge()
+    }
+
+    func clearAttention(_ agentID: Agent.ID) {
+        guard attention.remove(agentID) != nil else { return }
+        recomputeStatuses()
+        updateDockBadge()
+    }
+
+    private func updateDockBadge() {
+        NSApp.dockTile.badgeLabel = attention.isEmpty ? nil : "\(attention.count)"
+    }
+
+    func sessionName(forPaneID paneID: String) -> String? {
+        controlClient.sessionName(forPaneID: paneID)
     }
 
     func liveTitle(for agent: Agent) -> String? {
@@ -287,6 +415,7 @@ final class AppState {
             activeAgentByFolder.removeValue(forKey: agent.folderID)
         }
         if splitAgentID == agent.id { splitAgentID = nil }
+        clearAttention(agent.id)
         persistUISelection()
     }
 
@@ -327,6 +456,10 @@ final class AppState {
     /// sidebar's attention dot now that agents aren't listed there.
     func folderHasExitedAgent(_ folderID: Folder.ID) -> Bool {
         store.agents(in: folderID).contains { agentStatuses[$0.id] == .exited }
+    }
+
+    func folderNeedsAttention(_ folderID: Folder.ID) -> Bool {
+        store.agents(in: folderID).contains { attention.contains($0.id) }
     }
 
     func setTerminalFontSize(_ size: Double) {

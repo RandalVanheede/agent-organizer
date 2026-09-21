@@ -30,6 +30,11 @@ struct FolderRowView: View {
                     .fill(.red)
                     .frame(width: 6, height: 6)
                     .help("An agent's session in this folder has exited")
+            } else if appState.folderNeedsAttention(folder.id) {
+                Circle()
+                    .fill(.orange)
+                    .frame(width: 6, height: 6)
+                    .help("An agent in this folder is waiting for you")
             }
             if agentCount > 0 {
                 Text("\(agentCount)")

@@ -5,7 +5,13 @@ CONFIG := release
 BUILD_BIN_DIR := $(shell swift build -c $(CONFIG) --show-bin-path)
 APP_DIR := build/$(APP_NAME).app
 
-.PHONY: build bundle run install clean
+.PHONY: build bundle run install clean tmux icon
+
+tmux:
+	scripts/build-tmux.sh
+
+icon:
+	swift scripts/make-icon.swift Resources/AppIcon.iconset
 
 build:
 	swift build -c $(CONFIG)
@@ -17,6 +23,13 @@ bundle: build
 	cp "$(BUILD_BIN_DIR)/$(EXECUTABLE)" "$(APP_DIR)/Contents/MacOS/$(EXECUTABLE)"
 	cp Resources/Info.plist "$(APP_DIR)/Contents/Info.plist"
 	cp Resources/tmux.conf "$(APP_DIR)/Contents/Resources/tmux.conf"
+	cp Resources/ao-hook.sh "$(APP_DIR)/Contents/Resources/ao-hook.sh"
+	@if [ -x Resources/bin/tmux ]; then \
+		mkdir -p "$(APP_DIR)/Contents/Resources/bin"; \
+		cp Resources/bin/tmux "$(APP_DIR)/Contents/Resources/bin/tmux"; \
+	else \
+		echo "note: Resources/bin/tmux missing; run scripts/build-tmux.sh to bundle tmux"; \
+	fi
 	@if [ -d Resources/AppIcon.iconset ]; then \
 		iconutil -c icns Resources/AppIcon.iconset -o "$(APP_DIR)/Contents/Resources/AppIcon.icns"; \
 	fi
