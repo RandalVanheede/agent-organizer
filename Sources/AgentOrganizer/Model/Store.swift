@@ -11,6 +11,10 @@ final class Store {
     var presets: [AgentPreset] = AgentPreset.defaults
     var killAgentsOnQuit: Bool = false
     var terminalFontSize: Double = 13
+    /// UI continuity across launches: which folder was open, and which
+    /// agent tab was active in each folder (keyed by uuidString).
+    var lastSelectedFolderID: UUID?
+    var activeAgentByFolder: [String: String] = [:]
 
     private let fileURL: URL
 
@@ -32,6 +36,8 @@ final class Store {
         var presets: [AgentPreset]
         var killAgentsOnQuit: Bool
         var terminalFontSize: Double?
+        var lastSelectedFolderID: UUID?
+        var activeAgentByFolder: [String: String]?
     }
 
     func load() {
@@ -43,6 +49,8 @@ final class Store {
         if !state.presets.isEmpty { presets = state.presets }
         killAgentsOnQuit = state.killAgentsOnQuit
         terminalFontSize = state.terminalFontSize ?? 13
+        lastSelectedFolderID = state.lastSelectedFolderID
+        activeAgentByFolder = state.activeAgentByFolder ?? [:]
     }
 
     func save() {
@@ -51,7 +59,9 @@ final class Store {
             agents: agents,
             presets: presets,
             killAgentsOnQuit: killAgentsOnQuit,
-            terminalFontSize: terminalFontSize
+            terminalFontSize: terminalFontSize,
+            lastSelectedFolderID: lastSelectedFolderID,
+            activeAgentByFolder: activeAgentByFolder
         )
         guard let data = try? JSONEncoder().encode(state) else { return }
         try? data.write(to: fileURL, options: .atomic)
@@ -168,6 +178,12 @@ final class Store {
         presets.removeAll { $0.id == preset.id }
         save()
         return true
+    }
+
+    func setUISelection(folderID: UUID?, activeAgentByFolder: [String: String]) {
+        lastSelectedFolderID = folderID
+        self.activeAgentByFolder = activeAgentByFolder
+        save()
     }
 
     func setTerminalFontSize(_ size: Double) {

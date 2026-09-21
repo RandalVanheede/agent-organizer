@@ -1,31 +1,19 @@
 import SwiftUI
 
-/// Flat "folder → agents" list, A‑Z by folder name. No repo-level nesting:
-/// a container folder (one with sub-repos) is still a single section here.
+/// Folders only, A‑Z, behaving like vertical tabs: selecting one opens its
+/// canvas (agent tabs + terminal) on the right. Agents are never nested here.
 struct SidebarView: View {
     @Environment(AppState.self) private var appState
 
     var body: some View {
-        @Bindable var appState = appState
-        List(selection: $appState.selection) {
-            ForEach(appState.store.sortedFolders()) { folder in
-                Section {
-                    let agents = appState.store.agents(in: folder.id)
-                    if agents.isEmpty {
-                        Text("No agents yet")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(agents) { agent in
-                            AgentRowView(agent: agent)
-                                .tag(SidebarSelection.agent(agent.id))
-                        }
-                        .onMove { source, destination in
-                            appState.moveAgents(in: folder.id, fromOffsets: source, toOffset: destination)
-                        }
-                    }
-                } header: {
-                    FolderHeaderView(folder: folder)
+        List(selection: Binding(
+            get: { appState.selectedFolderID },
+            set: { appState.selectFolder($0) }
+        )) {
+            Section("Folders") {
+                ForEach(appState.store.sortedFolders()) { folder in
+                    FolderRowView(folder: folder)
+                        .tag(folder.id)
                 }
             }
 

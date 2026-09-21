@@ -11,6 +11,12 @@ struct MainSplitView: View {
         } detail: {
             DetailView()
         }
+        .sheet(item: Binding(
+            get: { appState.newAgentPopoverFolderID.flatMap { appState.store.folder($0) } },
+            set: { newValue in appState.newAgentPopoverFolderID = newValue?.id }
+        )) { folder in
+            NewAgentPopoverView(folder: folder)
+        }
         .alert(
             "Remove \"\(appState.folderPendingRemoval?.displayName ?? "")\"?",
             isPresented: Binding(

@@ -124,16 +124,16 @@ Sidebar shows one **section per folder**, A‑Z (case‑insensitive, `localizedS
 
 Folder re‑scan: on `DispatchSource` write event on the folder dir (debounced 500 ms) and on manual refresh. Removing a folder from the sidebar asks: *Keep agents running in tmux* (default) / *Kill agents*.
 
-## 6. UI
+## 6. UI (revised after first real use)
 
-- `NavigationSplitView` sidebar + detail. Sidebar toolbar: `+` add folder(s), `⌘N` new agent.
-- Detail = `TerminalHostView` (`NSViewRepresentable`) that swaps in a **cached** `LocalProcessTerminalView` per agent from `[Agent.ID: NSView]`. Attach happens on first selection (`tmux attach`); views stay alive when deselected so output and scrollback persist. Optional preference: detach hidden agents after N min to reclaim memory.
-- Empty states: no folders → drop zone + "Add folder"; tmux missing → onboarding card with `brew install tmux` and a "Recheck" button.
-- Shortcuts: ⌘⇧O add folder · ⌘N new agent · ⌘W hide/detach agent (keeps running) · ⌘⇧W kill agent · ⌘R rename · ⌘1‑9 jump to agent n in current folder · ⌃Tab / ⌘⌥←→ next/prev agent · ⌘F find in scrollback (SwiftTerm search).
-- Drag‑and‑drop folders onto sidebar. Drag agents to reorder within a folder (folders themselves stay A‑Z).
-- Status dot per agent, driven by control mode: green = output in last 3 s, yellow = waiting (no output, pane alive, tool running), grey = idle shell, red/strikethrough = tmux session gone (offer Restart / Remove).
-- Window close ≠ quit; ⌘Q quits and leaves sessions. Preference "Kill all agents on quit" (off).
-- Appearance: system dark/light, one accent, SF Mono default, font size pref.
+- `NavigationSplitView`. **Sidebar = folders only, A‑Z, acting as vertical tabs** (`List(selection:)`, one row per folder, no nested agents). Row shows kind icon, name, branch badge (repo folders), agent‑count badge, red dot if any agent's session has exited. Right‑click: New Agent, Rescan, Reveal in Finder, Remove Folder. "Unmanaged Sessions" section at the bottom when orphaned tmux sessions exist.
+- **Canvas (detail) = horizontal agent tabs across the top + the active agent's terminal below.** Tabs show status dot, tool icon, title (custom → live tmux title → tool name), and `cwd · branch` subtitle when not at folder root. Trailing `+` creates an agent. Right‑click a tab: Restart, Rename, Open Side‑by‑Side, Move Left/Right, Kill. Each folder remembers its active tab; folder + tab selection persist across launches.
+- `TerminalHostView` (`NSViewRepresentable`) swaps in a **cached** `LocalProcessTerminalView` per agent from `TerminalCache`. Attach happens on first display; views stay alive for the app's lifetime. Never auto‑detached.
+- New Agent is a **single `.sheet` at the window root** (`MainSplitView`), driven by `newAgentPopoverFolderID`. Per‑row popovers in List headers were unreliable (wrong anchor / failed to present once a row was selected) — that was the first real bug report.
+- Side‑by‑side: `HSplitView` of two `TerminalHostView`s from the same folder.
+- Empty states: no folders → drop zone / "Add folder"; tmux missing → onboarding card with `brew install tmux` and Recheck.
+- Shortcuts: ⌘⇧O add folder · ⌘N new agent (in selected folder) · ⌘⇧W kill agent · Agent menu: Restart.
+- Window close ≠ quit; ⌘Q leaves sessions running. Preference "Kill all agents on quit" (off). Preferences also: terminal font size (live), Tools tab to add/edit/remove presets.
 
 ## 7. Status & metadata (phase 2)
 

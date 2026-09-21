@@ -2,11 +2,6 @@ import AppKit
 import Foundation
 import Observation
 
-enum SidebarSelection: Hashable {
-    case folder(Folder.ID)
-    case agent(Agent.ID)
-}
-
 /// Top-level app state: owns the persisted `Store`, the tmux connection, the
 /// terminal view cache, and current UI selection. `tmux` is optional because
 /// tmux may not be installed — callers show onboarding instead of failing.
@@ -29,7 +24,11 @@ final class AppState {
     private let controlClient = TmuxControlModeClient()
     private let watcher = FolderWatcher()
 
-    var selection: SidebarSelection?
+    /// Sidebar selection: folders behave like vertical tabs.
+    private(set) var selectedFolderID: Folder.ID?
+    /// Which agent tab is active inside each folder (horizontal tabs on
+    /// the canvas). Missing entry = first agent in that folder.
+    private(set) var activeAgentByFolder: [Folder.ID: Agent.ID] = [:]
     /// Non-nil while the "new agent" popover should be shown for this folder
     /// (driven by either the sidebar's + button or the ⌘N menu command).
     var newAgentPopoverFolderID: Folder.ID?
@@ -57,6 +56,38 @@ final class AppState {
         wireControlClient()
         for folder in store.folders { watcher.watch(folder) }
         watcher.onChange = { [weak self] id in self?.handleFolderChanged(id) }
+        restoreUISelection()
+    }
+
+    private func restoreUISelection() {
+        if let id = store.lastSelectedFolderID, store.folder(id) != nil {
+            selectedFolderID = id
+        }
+        for (f, a) in store.activeAgentByFolder {
+            if let fid = UUID(uuidString: f), let aid = UUID(uuidString: a),
+               store.folder(fid) != nil, store.agents.contains(where: { $0.id == aid }) {
+                activeAgentByFolder[fid] = aid
+            }
+        }
+    }
+
+    private func persistUISelection() {
+        var map: [String: String] = [:]
+        for (f, a) in activeAgentByFolder { map[f.uuidString] = a.uuidString }
+        store.setUISelection(folderID: selectedFolderID, activeAgentByFolder: map)
+    }
+
+    func selectFolder(_ id: Folder.ID?) {
+        selectedFolderID = id
+        splitAgentID = nil
+        persistUISelection()
+    }
+
+    func selectAgent(_ agent: Agent) {
+        selectedFolderID = agent.folderID
+        activeAgentByFolder[agent.folderID] = agent.id
+        if splitAgentID == agent.id { splitAgentID = nil }
+        persistUISelection()
     }
 
     private func wireControlClient() {
@@ -133,16 +164,18 @@ final class AppState {
     }
 
     var selectedFolder: Folder? {
-        switch selection {
-        case .folder(let id): return store.folder(id)
-        case .agent(let id): return store.agents.first { $0.id == id }.flatMap { store.folder($0.folderID) }
-        case nil: return nil
-        }
+        selectedFolderID.flatMap { store.folder($0) }
     }
 
+    /// The active tab of the selected folder, falling back to its first
+    /// agent when nothing (or something since killed) is recorded.
     var selectedAgent: Agent? {
-        guard case .agent(let id) = selection else { return nil }
-        return store.agents.first { $0.id == id }
+        guard let folder = selectedFolder else { return nil }
+        let agents = store.agents(in: folder.id)
+        if let id = activeAgentByFolder[folder.id], let agent = agents.first(where: { $0.id == id }) {
+            return agent
+        }
+        return agents.first
     }
 
     /// Only valid alongside a primary agent in the *same* folder — a stale
@@ -188,7 +221,7 @@ final class AppState {
                 watcher.watch(folder)
             }
         }
-        if let lastAdded { selection = .folder(lastAdded.id) }
+        if let lastAdded { selectFolder(lastAdded.id) }
     }
 
     func requestRemoveFolder(_ folder: Folder) {
@@ -205,8 +238,10 @@ final class AppState {
         }
         watcher.stopWatching(folder.id)
         store.removeFolder(folder, killAgents: killAgents, tmux: tmux)
-        if selectedFolder?.id == folder.id { selection = nil }
+        activeAgentByFolder.removeValue(forKey: folder.id)
+        if selectedFolderID == folder.id { selectedFolderID = nil }
         folderPendingRemoval = nil
+        persistUISelection()
     }
 
     func rescan(_ folder: Folder) {
@@ -241,17 +276,18 @@ final class AppState {
         let cwd = agent.resolvedCwd(folderPath: folder.path)
         tmux?.ensureSession(name: session, cwd: cwd, command: preset.command.isEmpty ? nil : preset.command)
         store.addAgent(agent)
-        selection = .agent(agent.id)
+        selectAgent(agent)
         newAgentPopoverFolderID = nil
     }
 
     func killAgent(_ agent: Agent) {
         cache.discard(agent.id)
         store.removeAgent(agent, tmux: tmux)
-        if selection == .agent(agent.id) {
-            selection = store.folder(agent.folderID).map { .folder($0.id) }
+        if activeAgentByFolder[agent.folderID] == agent.id {
+            activeAgentByFolder.removeValue(forKey: agent.folderID)
         }
         if splitAgentID == agent.id { splitAgentID = nil }
+        persistUISelection()
     }
 
     func restartAgent(_ agent: Agent) {
@@ -263,6 +299,30 @@ final class AppState {
 
     func moveAgents(in folderID: Folder.ID, fromOffsets source: IndexSet, toOffset destination: Int) {
         store.moveAgents(in: folderID, fromOffsets: source, toOffset: destination)
+    }
+
+    /// Shift one tab left (-1) or right (+1) within its folder.
+    func moveAgent(_ agent: Agent, by offset: Int) {
+        let agents = store.agents(in: agent.folderID)
+        guard let idx = agents.firstIndex(where: { $0.id == agent.id }) else { return }
+        let target = idx + offset
+        guard target >= 0, target < agents.count else { return }
+        // IndexSet/toOffset semantics: moving right by one needs destination idx+2.
+        let destination = offset > 0 ? target + 1 : target
+        store.moveAgents(in: agent.folderID, fromOffsets: IndexSet(integer: idx), toOffset: destination)
+    }
+
+    func canMoveAgent(_ agent: Agent, by offset: Int) -> Bool {
+        let agents = store.agents(in: agent.folderID)
+        guard let idx = agents.firstIndex(where: { $0.id == agent.id }) else { return false }
+        let target = idx + offset
+        return target >= 0 && target < agents.count
+    }
+
+    /// Any agent in this folder whose tmux session is gone — used for the
+    /// sidebar's attention dot now that agents aren't listed there.
+    func folderHasExitedAgent(_ folderID: Folder.ID) -> Bool {
+        store.agents(in: folderID).contains { agentStatuses[$0.id] == .exited }
     }
 
     func setTerminalFontSize(_ size: Double) {

@@ -1,23 +1,29 @@
 import SwiftUI
 
+/// The canvas for the selected folder: agent tabs across the top, the active
+/// agent's terminal below (optionally split with a second one).
 struct DetailView: View {
     @Environment(AppState.self) private var appState
 
     var body: some View {
-        if let agent = appState.selectedAgent, let folder = appState.store.folder(agent.folderID), let tmux = appState.tmux {
-            Group {
-                if let secondary = appState.splitAgent {
-                    HSplitView {
+        if let folder = appState.selectedFolder, let tmux = appState.tmux {
+            VStack(spacing: 0) {
+                AgentTabBar(folder: folder)
+                if let agent = appState.selectedAgent {
+                    if let secondary = appState.splitAgent {
+                        HSplitView {
+                            AgentPane(agent: agent, folder: folder, tmux: tmux)
+                            AgentPane(agent: secondary, folder: folder, tmux: tmux)
+                        }
+                    } else {
                         AgentPane(agent: agent, folder: folder, tmux: tmux)
-                        AgentPane(agent: secondary, folder: folder, tmux: tmux)
                     }
                 } else {
-                    AgentPane(agent: agent, folder: folder, tmux: tmux)
+                    NoAgentsPlaceholder(folder: folder)
                 }
             }
-            .navigationTitle(agent.title ?? appState.store.preset(for: agent.presetID).name)
-        } else if let folder = appState.selectedFolder {
-            FolderPlaceholderView(folder: folder)
+            .navigationTitle(folder.displayName)
+            .navigationSubtitle(appState.selectedAgent.map { $0.title ?? appState.store.preset(for: $0.presetID).name } ?? "")
         } else {
             ContentUnavailableFallback()
         }
@@ -44,29 +50,23 @@ private struct AgentPane: View {
     }
 }
 
-private struct FolderPlaceholderView: View {
+private struct NoAgentsPlaceholder: View {
     @Environment(AppState.self) private var appState
     let folder: Folder
 
     var body: some View {
-        @Bindable var appState = appState
         VStack(spacing: 12) {
             Image(systemName: "terminal")
                 .font(.system(size: 32))
                 .foregroundStyle(.secondary)
             Text(folder.displayName)
                 .font(.title3.weight(.semibold))
-            Text("No agent selected yet.")
+            Text("No agents in this folder yet.")
                 .foregroundStyle(.secondary)
             Button("New Agent…") {
                 appState.newAgentPopoverFolderID = folder.id
             }
-            .popover(isPresented: Binding(
-                get: { appState.newAgentPopoverFolderID == folder.id },
-                set: { if !$0 { appState.newAgentPopoverFolderID = nil } }
-            )) {
-                NewAgentPopoverView(folder: folder)
-            }
+            .keyboardShortcut(.defaultAction)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -78,7 +78,7 @@ private struct ContentUnavailableFallback: View {
             Image(systemName: "sidebar.left")
                 .font(.system(size: 32))
                 .foregroundStyle(.secondary)
-            Text("Select a folder or agent")
+            Text("Select a folder")
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
