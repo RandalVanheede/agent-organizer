@@ -180,13 +180,14 @@ Dependency: `brew install tmux` (app detects and guides). Later option: bundle a
 | M2 | Agents: SwiftTerm + tmux attach, presets (claude/opencode/shell), new/kill, reconcile on launch, tmux‑missing onboarding | ✅ Done — verified sessions survive app quit |
 | M3 | Sub‑repo scan, cwd picker, cwd badges, folder watch/rescan | ✅ Done — `FolderWatcher` debounced rescan on dir + `.git/HEAD` changes |
 | M4 | Control mode: status, live titles, death detection | ✅ Done (status is binary running/exited, not yet running/waiting/idle — see below). Restart (`--continue`) shipped in M2's Commands. `TmuxControlModeClient` replaces polling as the primary path; a 10s poll remains a fallback only |
-| M5 | Polish: shortcuts, rename, git branch display, quit‑behaviour preference | Mostly done — shortcuts/rename/branch display/preference toggle shipped. Reorder and a presets/font preferences UI not built (`presets`/font are edited by hand in `state.json` for now) |
-| M6 | Optional: split view, detach agent to own window, notifications via Claude hooks, dock badge, orphan-session surfacing | Orphan-session surfacing shipped early (found a real one during testing). Split view / detach-to-window / notifications / dock badge not built — still optional |
+| M5 | Polish: shortcuts, rename, git branch display, quit‑behaviour preference, reorder, presets/font preferences | ✅ Done — drag-to-reorder within a folder; Preferences has a font-size stepper (applied live) and a Tools tab to add/edit/remove presets |
+| M6 | Optional: split view, detach agent to own window, notifications via Claude hooks, dock badge, orphan-session surfacing | Split view and orphan-session surfacing shipped (both found to matter during real use). Detach-to-own-window / Claude-hook notifications / dock badge not built — still optional |
 
 Known gaps, not yet addressed:
 - Status is binary (green=session alive, red=session gone), not the three-way running/waiting/idle distinction sketched in §6 — that needs per-pane output-activity tracking, which tmux control mode only reports for the session a client is *attached* to, not server-wide. Would need one control-mode client per agent (or per visible agent) rather than one shared client; deferred as a real cost/benefit call, not an oversight.
-- No UI to reorder agents within a folder or edit presets/font from Preferences.
+- No detach-to-own-window, no Claude-hook-driven notifications/dock badge.
 - tmux is a Homebrew dependency; not yet bundled statically.
+- Interactive UI click-through (drag reorder, split-view toggle, presets editor) is verified by accessibility-tree reads and direct tmux-level checks, not by simulated clicks — this environment's accessibility permissions allow read-only introspection but not reliable click automation. Worth a manual pass.
 
 ## 11. Risks / open points
 
