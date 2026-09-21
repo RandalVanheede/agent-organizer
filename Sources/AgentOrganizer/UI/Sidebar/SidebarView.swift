@@ -11,7 +11,6 @@ struct SidebarView: View {
             ForEach(appState.store.sortedFolders()) { folder in
                 Section {
                     let agents = appState.store.agents(in: folder.id)
-                        .sorted { $0.createdAt < $1.createdAt }
                     if agents.isEmpty {
                         Text("No agents yet")
                             .font(.caption)
@@ -20,6 +19,9 @@ struct SidebarView: View {
                         ForEach(agents) { agent in
                             AgentRowView(agent: agent)
                                 .tag(SidebarSelection.agent(agent.id))
+                        }
+                        .onMove { source, destination in
+                            appState.moveAgents(in: folder.id, fromOffsets: source, toOffset: destination)
                         }
                     }
                 } header: {

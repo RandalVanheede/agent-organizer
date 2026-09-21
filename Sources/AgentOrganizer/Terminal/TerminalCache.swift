@@ -14,12 +14,13 @@ final class TerminalCache {
     private var views: [Agent.ID: LocalProcessTerminalView] = [:]
     private var delegates: [Agent.ID: TerminalAttachDelegate] = [:]
 
-    func view(for agent: Agent, cwd: URL, tmux: TmuxController) -> LocalProcessTerminalView {
+    func view(for agent: Agent, cwd: URL, tmux: TmuxController, fontSize: Double) -> LocalProcessTerminalView {
         if let existing = views[agent.id] {
             return existing
         }
 
         let view = LocalProcessTerminalView(frame: .zero)
+        view.font = .monospacedSystemFont(ofSize: fontSize, weight: .regular)
         let delegate = TerminalAttachDelegate()
         view.processDelegate = delegate
         delegates[agent.id] = delegate
@@ -31,6 +32,16 @@ final class TerminalCache {
 
         views[agent.id] = view
         return view
+    }
+
+    /// Applies a new font size to every currently-live terminal view. Called
+    /// when the user changes the preference — new agents pick it up via
+    /// `view(for:...)`'s initial set, existing ones need this explicit push.
+    func applyFontSize(_ size: Double) {
+        let font = NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+        for view in views.values {
+            view.font = font
+        }
     }
 
     func hasView(for agentID: Agent.ID) -> Bool {

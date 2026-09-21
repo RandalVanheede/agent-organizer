@@ -35,6 +35,11 @@ final class AppState {
     var newAgentPopoverFolderID: Folder.ID?
     /// Folder pending removal confirmation (asks whether to kill its agents).
     var folderPendingRemoval: Folder?
+    /// A second agent shown side-by-side with the selected one, so two
+    /// agents in the same folder can be watched/worked at once. Cleared
+    /// whenever it stops making sense (killed, or selection moves to a
+    /// different folder) rather than left pointing at something stale.
+    var splitAgentID: Agent.ID?
 
     /// Kept fresh primarily by tmux control-mode's `%sessions-changed`
     /// event (near-instant); `startStatusPolling` also runs a slow fallback
@@ -140,6 +145,21 @@ final class AppState {
         return store.agents.first { $0.id == id }
     }
 
+    /// Only valid alongside a primary agent in the *same* folder — a stale
+    /// id (killed, or left over from a different folder) simply renders
+    /// nothing rather than needing to be proactively cleared everywhere.
+    var splitAgent: Agent? {
+        guard let splitAgentID, let primary = selectedAgent,
+              let candidate = store.agents.first(where: { $0.id == splitAgentID }),
+              candidate.folderID == primary.folderID, candidate.id != primary.id
+        else { return nil }
+        return candidate
+    }
+
+    func toggleSplit(with agent: Agent) {
+        splitAgentID = (splitAgentID == agent.id) ? nil : agent.id
+    }
+
     /// Drop persisted agents whose tmux session no longer exists (e.g. the
     /// socket file was cleared out from under us) instead of showing a dead
     /// entry. Never kills a *live* session on launch.
@@ -231,6 +251,7 @@ final class AppState {
         if selection == .agent(agent.id) {
             selection = store.folder(agent.folderID).map { .folder($0.id) }
         }
+        if splitAgentID == agent.id { splitAgentID = nil }
     }
 
     func restartAgent(_ agent: Agent) {
@@ -238,6 +259,15 @@ final class AppState {
         let command = preset.resumeCommand ?? preset.command
         guard !command.isEmpty else { return }
         tmux?.sendKeys(to: agent.tmuxSession, text: command)
+    }
+
+    func moveAgents(in folderID: Folder.ID, fromOffsets source: IndexSet, toOffset destination: Int) {
+        store.moveAgents(in: folderID, fromOffsets: source, toOffset: destination)
+    }
+
+    func setTerminalFontSize(_ size: Double) {
+        store.setTerminalFontSize(size)
+        cache.applyFontSize(store.terminalFontSize)
     }
 
     private static func slug(_ text: String) -> String {

@@ -10,6 +10,7 @@ struct TerminalHostView: NSViewRepresentable {
     let cwd: URL?
     let tmux: TmuxController
     let cache: TerminalCache
+    let fontSize: Double
 
     func makeNSView(context: Context) -> NSView {
         NSView()
@@ -21,7 +22,7 @@ struct TerminalHostView: NSViewRepresentable {
             return
         }
 
-        let terminalView = cache.view(for: agent, cwd: cwd, tmux: tmux)
+        let terminalView = cache.view(for: agent, cwd: cwd, tmux: tmux, fontSize: fontSize)
         if terminalView.superview !== container {
             container.subviews.forEach { $0.removeFromSuperview() }
             terminalView.translatesAutoresizingMaskIntoConstraints = false

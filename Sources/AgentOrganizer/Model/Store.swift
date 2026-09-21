@@ -10,6 +10,7 @@ final class Store {
     var agents: [Agent] = []
     var presets: [AgentPreset] = AgentPreset.defaults
     var killAgentsOnQuit: Bool = false
+    var terminalFontSize: Double = 13
 
     private let fileURL: URL
 
@@ -30,6 +31,7 @@ final class Store {
         var agents: [Agent]
         var presets: [AgentPreset]
         var killAgentsOnQuit: Bool
+        var terminalFontSize: Double?
     }
 
     func load() {
@@ -40,10 +42,17 @@ final class Store {
         agents = state.agents
         if !state.presets.isEmpty { presets = state.presets }
         killAgentsOnQuit = state.killAgentsOnQuit
+        terminalFontSize = state.terminalFontSize ?? 13
     }
 
     func save() {
-        let state = PersistedState(folders: folders, agents: agents, presets: presets, killAgentsOnQuit: killAgentsOnQuit)
+        let state = PersistedState(
+            folders: folders,
+            agents: agents,
+            presets: presets,
+            killAgentsOnQuit: killAgentsOnQuit,
+            terminalFontSize: terminalFontSize
+        )
         guard let data = try? JSONEncoder().encode(state) else { return }
         try? data.write(to: fileURL, options: .atomic)
     }
@@ -114,6 +123,55 @@ final class Store {
     func renameAgent(_ agent: Agent, to title: String?) {
         guard let idx = agents.firstIndex(where: { $0.id == agent.id }) else { return }
         agents[idx].title = (title?.isEmpty ?? true) ? nil : title
+        save()
+    }
+
+    /// Reorders agents within one folder only. Other folders' agents keep
+    /// their existing relative position in the backing array untouched.
+    func moveAgents(in folderID: UUID, fromOffsets source: IndexSet, toOffset destination: Int) {
+        var subset = agents.filter { $0.folderID == folderID }
+        subset.move(fromOffsets: source, toOffset: destination)
+        var iterator = subset.makeIterator()
+        for i in agents.indices where agents[i].folderID == folderID {
+            if let next = iterator.next() { agents[i] = next }
+        }
+        save()
+    }
+
+    // MARK: Presets
+
+    @discardableResult
+    func addPreset(name: String, command: String, resumeCommand: String?, icon: String) -> AgentPreset {
+        let preset = AgentPreset(
+            id: "custom-\(UUID().uuidString.prefix(8).lowercased())",
+            name: name,
+            command: command,
+            resumeCommand: (resumeCommand?.isEmpty ?? true) ? nil : resumeCommand,
+            icon: icon
+        )
+        presets.append(preset)
+        save()
+        return preset
+    }
+
+    func updatePreset(_ preset: AgentPreset) {
+        guard let idx = presets.firstIndex(where: { $0.id == preset.id }) else { return }
+        presets[idx] = preset
+        save()
+    }
+
+    /// Refuses to remove a preset still in use by an existing agent, so no
+    /// agent row is ever left pointing at nothing.
+    @discardableResult
+    func removePreset(_ preset: AgentPreset) -> Bool {
+        guard !agents.contains(where: { $0.presetID == preset.id }) else { return false }
+        presets.removeAll { $0.id == preset.id }
+        save()
+        return true
+    }
+
+    func setTerminalFontSize(_ size: Double) {
+        terminalFontSize = min(max(size, 9), 24)
         save()
     }
 }

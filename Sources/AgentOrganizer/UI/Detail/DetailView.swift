@@ -5,19 +5,42 @@ struct DetailView: View {
 
     var body: some View {
         if let agent = appState.selectedAgent, let folder = appState.store.folder(agent.folderID), let tmux = appState.tmux {
-            TerminalHostView(
-                agent: agent,
-                cwd: agent.resolvedCwd(folderPath: folder.path),
-                tmux: tmux,
-                cache: appState.cache
-            )
-            .id(agent.id)
+            Group {
+                if let secondary = appState.splitAgent {
+                    HSplitView {
+                        AgentPane(agent: agent, folder: folder, tmux: tmux)
+                        AgentPane(agent: secondary, folder: folder, tmux: tmux)
+                    }
+                } else {
+                    AgentPane(agent: agent, folder: folder, tmux: tmux)
+                }
+            }
             .navigationTitle(agent.title ?? appState.store.preset(for: agent.presetID).name)
         } else if let folder = appState.selectedFolder {
             FolderPlaceholderView(folder: folder)
         } else {
             ContentUnavailableFallback()
         }
+    }
+}
+
+/// One agent's terminal, wrapped so it can appear either full-size or as
+/// one half of an `HSplitView` without duplicating the host-view wiring.
+private struct AgentPane: View {
+    @Environment(AppState.self) private var appState
+    let agent: Agent
+    let folder: Folder
+    let tmux: TmuxController
+
+    var body: some View {
+        TerminalHostView(
+            agent: agent,
+            cwd: agent.resolvedCwd(folderPath: folder.path),
+            tmux: tmux,
+            cache: appState.cache,
+            fontSize: appState.store.terminalFontSize
+        )
+        .id(agent.id)
     }
 }
 

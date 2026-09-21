@@ -40,6 +40,11 @@ struct AgentRowView: View {
         .contextMenu {
             Button("Restart") { appState.restartAgent(agent) }
             Button("Rename…") { renameRequested = true }
+            if let primary = appState.selectedAgent, primary.id != agent.id, primary.folderID == agent.folderID {
+                Button(appState.splitAgentID == agent.id ? "Close Split View" : "Open Side-by-Side") {
+                    appState.toggleSplit(with: agent)
+                }
+            }
             Divider()
             Button("Kill Agent", role: .destructive) { appState.killAgent(agent) }
         }
