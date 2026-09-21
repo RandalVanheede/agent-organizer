@@ -173,15 +173,20 @@ Dependency: `brew install tmux` (app detects and guides). Later option: bundle a
 
 ## 10. Milestones
 
-| # | Scope | Done when |
+| # | Scope | Status |
 |---|---|---|
-| M0 | SwiftPM skeleton, Makefile, `.app` launches with menu bar & window | `make run` opens empty window |
-| M1 | Folders: add (multi), remove, A‑Z sidebar, JSON persistence, folder kind detection | folders survive relaunch |
-| M2 | Agents: SwiftTerm + tmux attach, presets (claude/opencode/shell), new/kill/detach, reconcile on launch, tmux‑missing onboarding | quit app → relaunch → same claude session, same scrollback |
-| M3 | Sub‑repo scan, cwd picker, cwd badges, folder watch/rescan | container folder with 3 repos, agents in each |
-| M4 | Control mode: status dots, live titles, death detection, Restart (`--continue`) | dots change without polling |
-| M5 | Polish: shortcuts, rename, reorder, preferences (presets, font, quit behaviour), git branch display | daily‑drivable |
-| M6 | Optional: split view (2 agents side by side), detach agent to own window, notifications via Claude hooks, dock badge | — |
+| M0 | SwiftPM skeleton, Makefile, `.app` launches with menu bar & window | ✅ Done |
+| M1 | Folders: add (multi), remove, A‑Z sidebar, JSON persistence, folder kind detection | ✅ Done |
+| M2 | Agents: SwiftTerm + tmux attach, presets (claude/opencode/shell), new/kill, reconcile on launch, tmux‑missing onboarding | ✅ Done — verified sessions survive app quit |
+| M3 | Sub‑repo scan, cwd picker, cwd badges, folder watch/rescan | ✅ Done — `FolderWatcher` debounced rescan on dir + `.git/HEAD` changes |
+| M4 | Control mode: status, live titles, death detection | ✅ Done (status is binary running/exited, not yet running/waiting/idle — see below). Restart (`--continue`) shipped in M2's Commands. `TmuxControlModeClient` replaces polling as the primary path; a 10s poll remains a fallback only |
+| M5 | Polish: shortcuts, rename, git branch display, quit‑behaviour preference | Mostly done — shortcuts/rename/branch display/preference toggle shipped. Reorder and a presets/font preferences UI not built (`presets`/font are edited by hand in `state.json` for now) |
+| M6 | Optional: split view, detach agent to own window, notifications via Claude hooks, dock badge, orphan-session surfacing | Orphan-session surfacing shipped early (found a real one during testing). Split view / detach-to-window / notifications / dock badge not built — still optional |
+
+Known gaps, not yet addressed:
+- Status is binary (green=session alive, red=session gone), not the three-way running/waiting/idle distinction sketched in §6 — that needs per-pane output-activity tracking, which tmux control mode only reports for the session a client is *attached* to, not server-wide. Would need one control-mode client per agent (or per visible agent) rather than one shared client; deferred as a real cost/benefit call, not an oversight.
+- No UI to reorder agents within a folder or edit presets/font from Preferences.
+- tmux is a Homebrew dependency; not yet bundled statically.
 
 ## 11. Risks / open points
 
