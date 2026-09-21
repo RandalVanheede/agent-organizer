@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// Horizontal tabs along the top of a folder's canvas — one per agent, plus
-/// a trailing `+` to create another. Mirrors the sidebar's vertical tabs.
+/// Horizontal tabs along the top of a folder's canvas — one per agent (each
+/// with an X that kills it instantly), plus one "+ <tool>" button per preset
+/// on the right. Mirrors the sidebar's vertical tabs.
 struct AgentTabBar: View {
     @Environment(AppState.self) private var appState
     let folder: Folder
@@ -18,16 +19,13 @@ struct AgentTabBar: View {
                 }
                 .padding(.horizontal, 6)
             }
-            Button {
-                appState.newAgentPopoverFolderID = folder.id
-            } label: {
-                Image(systemName: "plus")
-                    .frame(width: 28, height: 28)
-                    .contentShape(Rectangle())
+            Divider().frame(height: 18).padding(.horizontal, 4)
+            HStack(spacing: 4) {
+                ForEach(appState.store.presets) { preset in
+                    NewAgentButton(folder: folder, preset: preset)
+                }
             }
-            .buttonStyle(.plain)
-            .help("New Agent… (⌘N)")
-            .padding(.trailing, 6)
+            .padding(.trailing, 8)
         }
         .frame(height: 34)
         .background(.bar)
@@ -37,12 +35,67 @@ struct AgentTabBar: View {
     }
 }
 
+/// One button per tool. Plain folders create an agent at the root
+/// instantly; folders with sub-repos offer root + each sub-repo in a menu.
+private struct NewAgentButton: View {
+    @Environment(AppState.self) private var appState
+    let folder: Folder
+    let preset: AgentPreset
+
+    var body: some View {
+        if folder.subRepos.isEmpty {
+            Button {
+                appState.createAgent(folder: folder, preset: preset, relativeCwd: "")
+            } label: {
+                label
+            }
+            .buttonStyle(.plain)
+            .help("New \(preset.name) agent")
+        } else {
+            Menu {
+                Button("in \(folder.displayName)") {
+                    appState.createAgent(folder: folder, preset: preset, relativeCwd: "")
+                }
+                Divider()
+                ForEach(folder.subRepos) { repo in
+                    Button(repo.branch.map { "\(repo.relativePath) · \($0)" } ?? repo.relativePath) {
+                        appState.createAgent(folder: folder, preset: preset, relativeCwd: repo.relativePath)
+                    }
+                }
+            } label: {
+                label
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("New \(preset.name) agent…")
+        }
+    }
+
+    private var label: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "plus")
+                .font(.caption2.weight(.semibold))
+            Image(systemName: preset.icon)
+                .font(.caption)
+            Text(preset.name)
+                .font(.caption)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.06)))
+        .contentShape(Rectangle())
+    }
+}
+
 private struct AgentTabView: View {
     @Environment(AppState.self) private var appState
     let agent: Agent
     let isActive: Bool
 
     @State private var isHovering = false
+    @State private var closeHovering = false
     @State private var renameRequested = false
     @State private var renameText = ""
 
@@ -79,8 +132,23 @@ private struct AgentTabView: View {
                             .lineLimit(1)
                     }
                 }
+                // Close = kill, instantly, no confirmation (user's call).
+                Button {
+                    appState.killAgent(agent)
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.caption2.weight(.bold))
+                        .frame(width: 16, height: 16)
+                        .background(Circle().fill(Color.primary.opacity(closeHovering ? 0.15 : 0)))
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .onHover { closeHovering = $0 }
+                .opacity(isActive || isHovering ? 1 : 0)
+                .help("Kill agent")
             }
-            .padding(.horizontal, 10)
+            .padding(.leading, 10)
+            .padding(.trailing, 6)
             .padding(.vertical, 4)
             .frame(minWidth: 90, maxWidth: 240, minHeight: 28)
             .background(
