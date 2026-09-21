@@ -69,6 +69,17 @@ final class TmuxController {
         run(["send-keys", "-t", session, "--", text, "Enter"])
     }
 
+    /// Kills whatever is running in the session's pane (the shell and its
+    /// children) and respawns a fresh login shell in `cwd`, then types
+    /// `command` into it. Used by "Restart" so e.g. `claude --continue` is
+    /// never typed *into* a still-running claude.
+    func respawn(session: String, cwd: URL, command: String?) {
+        run(["respawn-pane", "-k", "-c", cwd.path, "-t", session])
+        if let command, !command.isEmpty {
+            sendKeys(to: session, text: command)
+        }
+    }
+
     func killSession(_ name: String) {
         run(["kill-session", "-t", name])
     }

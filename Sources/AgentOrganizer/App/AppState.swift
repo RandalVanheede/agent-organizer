@@ -290,11 +290,15 @@ final class AppState {
         persistUISelection()
     }
 
+    /// Kill the pane's current process, get a fresh shell, then run the
+    /// tool's resume command (or its launch command if it has none).
     func restartAgent(_ agent: Agent) {
+        guard let folder = store.folder(agent.folderID) else { return }
         let preset = store.preset(for: agent.presetID)
         let command = preset.resumeCommand ?? preset.command
-        guard !command.isEmpty else { return }
-        tmux?.sendKeys(to: agent.tmuxSession, text: command)
+        tmux?.respawn(session: agent.tmuxSession,
+                      cwd: agent.resolvedCwd(folderPath: folder.path),
+                      command: command.isEmpty ? nil : command)
     }
 
     func moveAgents(in folderID: Folder.ID, fromOffsets source: IndexSet, toOffset destination: Int) {
