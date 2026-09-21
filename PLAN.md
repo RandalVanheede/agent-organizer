@@ -184,9 +184,17 @@ Dependency: `brew install tmux` (app detects and guides). Later option: bundle a
 | M6 | Split view · orphan sessions · **Claude Code hook notifications + Dock badge** · **bundled static tmux** · **app icon** · ⌘W kills agent | ✅ (detach‑to‑window not built — no one asked) |
 
 ### Status model (M4)
+Folder rows show one orb summarising their agents with the same palette as the tabs (exited > waiting > running > idle; none when the folder has no agents).
+
 `exited` = session gone · `idle` = pane runs only a shell · `running` = tool output in last 2.5 s · `waiting` = tool up but quiet, or a Claude hook (`Notification`/`Stop`) flagged it until the tab is viewed. Snapshot comes from the control client's subscription (`session|pane_id|pane_current_command|window_activity`); a 1 s in‑memory recompute decays running→waiting. Claude Code reports its *version* as `pane_current_command` (e.g. `2.1.278`) — anything not in the shell list counts as a tool.
 
 ### Hooks (M6)
+**System notifications need an Apple‑issued signature.** `UNUserNotificationCenter` answers "Notifications are not allowed for this application" for ad‑hoc *and* self‑signed builds (confirmed via `hooks.log`; only Developer ID / Apple Development identities are accepted). Without Xcode on this machine there is no such identity, so the app falls back automatically to **in‑app toasts**: floating non‑activating `NSPanel`s in the top‑right (click → jump to the agent, auto‑dismiss 8 s) plus Dock badge + Dock bounce. If a proper identity is ever available, the system path is used unchanged. Diagnostics: `~/Library/Application Support/Agent Organizer/hooks.log`.
+
+Builds are signed with a stable self‑signed identity "Agent Organizer Dev" (`scripts/make-signing-identity.sh`, `make identity`) so macOS permissions tied to the code signature survive rebuilds; ad‑hoc fallback otherwise.
+
+**Claude Code snapshots hooks at startup** — sessions that were already running when hooks were installed must be restarted (tab › Restart) before they fire.
+
 Preferences › Install writes `~/Library/Application Support/Agent Organizer/bin/ao-hook` and merges `Notification`/`Stop`/`UserPromptSubmit` entries into `~/.claude/settings.json` (backup kept). The script no‑ops unless `$TMUX` is our socket, then drops a JSON file in `…/events/`; `HookEventWatcher` (DispatchSource) maps `TMUX_PANE` → session → agent, flags attention (orange dot, Dock badge count), posts a `UNUserNotification` (click → jumps to the tab). Viewing the tab or a new prompt clears it.
 
 ### Bundled tmux (M6)

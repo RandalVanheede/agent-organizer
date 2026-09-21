@@ -1,7 +1,7 @@
 import AppKit
 import Foundation
 import Observation
-import UserNotifications
+@preconcurrency import UserNotifications
 
 /// Top-level app state: owns the persisted `Store`, the tmux connection, the
 /// terminal view cache, and current UI selection. `tmux` is optional because
@@ -75,7 +75,11 @@ final class AppState {
 
     private func handleHookEvent(_ event: HookEventWatcher.Event) {
         let session = sessionName(forPaneID: event.pane) ?? tmux?.sessionName(forPane: event.pane)
-        guard let session, let agent = store.agents.first(where: { $0.tmuxSession == session }) else { return }
+        guard let session, let agent = store.agents.first(where: { $0.tmuxSession == session }) else {
+            HookLog.write("event \(event.name) pane=\(event.pane) -> no agent (session=\(session ?? "nil"))")
+            return
+        }
+        HookLog.write("event \(event.name) pane=\(event.pane) -> \(session)")
 
         switch event.name {
         case "UserPromptSubmit":
@@ -95,14 +99,36 @@ final class AppState {
         }
     }
 
+    /// System notification when macOS allows it; otherwise (locally built,
+    /// non-Apple-signed app → "Notifications are not allowed") an in-app
+    /// floating toast. Dock badge + bounce happen regardless.
     private func postNotification(agentID: Agent.ID, title: String, body: String) {
-        let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = body
-        content.sound = .default
-        content.userInfo = ["agentID": agentID.uuidString]
-        let request = UNNotificationRequest(identifier: "agent-\(agentID.uuidString)", content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request)
+        if !NSApp.isActive {
+            NSApp.requestUserAttention(.informationalRequest)
+        }
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { settings in
+            let allowed = settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional
+            Task { @MainActor in
+                if allowed {
+                    let content = UNMutableNotificationContent()
+                    content.title = title
+                    content.body = body
+                    content.sound = .default
+                    content.userInfo = ["agentID": agentID.uuidString]
+                    let request = UNNotificationRequest(identifier: "agent-\(agentID.uuidString)", content: content, trigger: nil)
+                    center.add(request) { error in
+                        if let error { HookLog.write("system notification failed: \(error.localizedDescription)") }
+                    }
+                    HookLog.write("system notification: \"\(title)\"")
+                } else {
+                    HookLog.write("toast (system notifications not allowed, status=\(settings.authorizationStatus.rawValue)): \"\(title)\"")
+                    ToastCenter.shared.show(title: title, body: body) { [weak self] in
+                        self?.selectAgent(id: agentID)
+                    }
+                }
+            }
+        }
     }
 
     /// From a notification click: jump to that agent.
@@ -460,6 +486,18 @@ final class AppState {
 
     func folderNeedsAttention(_ folderID: Folder.ID) -> Bool {
         store.agents(in: folderID).contains { attention.contains($0.id) }
+    }
+
+    /// One orb for the whole folder, same palette as the tabs. Most
+    /// urgent wins: exited > waiting > running > idle. nil = no agents.
+    func folderStatus(_ folderID: Folder.ID) -> AgentStatus? {
+        let statuses = store.agents(in: folderID).map { agentStatuses[$0.id] ?? .unknown }
+        guard !statuses.isEmpty else { return nil }
+        if statuses.contains(.exited) { return .exited }
+        if statuses.contains(.waiting) { return .waiting }
+        if statuses.contains(.running) { return .running }
+        if statuses.contains(.idle) { return .idle }
+        return .unknown
     }
 
     func setTerminalFontSize(_ size: Double) {

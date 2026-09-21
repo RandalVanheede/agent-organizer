@@ -8,7 +8,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func applicationDidFinishLaunching(_ notification: Notification) {
         let center = UNUserNotificationCenter.current()
         center.delegate = self
-        center.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+        center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+            HookLog.write("notification authorization granted=\(granted) error=\(error?.localizedDescription ?? "none") bundle=\(Bundle.main.bundleIdentifier ?? "nil")")
+        }
     }
 
     // MARK: UNUserNotificationCenterDelegate

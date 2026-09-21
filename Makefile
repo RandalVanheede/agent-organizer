@@ -4,8 +4,15 @@ BUNDLE_ID := randalv.agent-organizer
 CONFIG := release
 BUILD_BIN_DIR := $(shell swift build -c $(CONFIG) --show-bin-path)
 APP_DIR := build/$(APP_NAME).app
+# Stable self-signed identity (scripts/make-signing-identity.sh). macOS ties
+# notification/TCC permission to the code signature; an ad-hoc signature
+# changes every build, so notifications are refused. Falls back to ad-hoc.
+SIGN_IDENTITY ?= $(shell security find-identity -v -p codesigning 2>/dev/null | grep -q '"Agent Organizer Dev"' && echo "Agent Organizer Dev" || echo "-")
 
-.PHONY: build bundle run install clean tmux icon
+.PHONY: build bundle run install clean tmux icon identity
+
+identity:
+	scripts/make-signing-identity.sh
 
 tmux:
 	scripts/build-tmux.sh
@@ -33,8 +40,9 @@ bundle: build
 	@if [ -d Resources/AppIcon.iconset ]; then \
 		iconutil -c icns Resources/AppIcon.iconset -o "$(APP_DIR)/Contents/Resources/AppIcon.icns"; \
 	fi
-	codesign --force --deep --sign - "$(APP_DIR)" 2>/dev/null || true
-	@echo "Built $(APP_DIR)"
+	@if [ "$(SIGN_IDENTITY)" = "-" ]; then echo "note: signing ad-hoc; run scripts/make-signing-identity.sh for working notifications"; fi
+	codesign --force --deep --sign "$(SIGN_IDENTITY)" "$(APP_DIR)"
+	@echo "Built $(APP_DIR) (signed: $(SIGN_IDENTITY))"
 
 run: bundle
 	open "$(APP_DIR)"

@@ -116,15 +116,7 @@ private struct AgentTabView: View {
             appState.selectAgent(agent)
         } label: {
             HStack(spacing: 6) {
-                Circle()
-                    .fill(statusColor)
-                    .frame(width: 7, height: 7)
-                    .overlay {
-                        if status == .waiting {
-                            Circle().stroke(statusColor.opacity(0.5), lineWidth: 2).frame(width: 11, height: 11)
-                        }
-                    }
-                    .help(statusHelp)
+                StatusOrb(status: status)
                 Image(systemName: preset.icon)
                     .font(.caption)
                 VStack(alignment: .leading, spacing: 0) {
@@ -193,23 +185,4 @@ private struct AgentTabView: View {
         }
     }
 
-    private var statusColor: Color {
-        switch status {
-        case .running: return .green
-        case .waiting: return .orange
-        case .idle: return .gray
-        case .exited: return .red
-        case .unknown: return .gray.opacity(0.5)
-        }
-    }
-
-    private var statusHelp: String {
-        switch status {
-        case .running: return "Running"
-        case .waiting: return "Waiting for input"
-        case .idle: return "Idle shell"
-        case .exited: return "Session exited"
-        case .unknown: return "Status unknown"
-        }
-    }
 }

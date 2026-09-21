@@ -2,7 +2,8 @@ import SwiftUI
 
 /// One vertical "tab" in the sidebar. Agents are not listed here any more —
 /// they live as horizontal tabs on the canvas — so the row carries a count
-/// badge and an attention dot when any of its agents' sessions has died.
+/// badge and one status orb summarising its agents (exited > waiting >
+/// running > idle; nothing when the folder has no agents).
 struct FolderRowView: View {
     @Environment(AppState.self) private var appState
     let folder: Folder
@@ -25,16 +26,8 @@ struct FolderRowView: View {
                 }
             }
             Spacer(minLength: 4)
-            if appState.folderHasExitedAgent(folder.id) {
-                Circle()
-                    .fill(.red)
-                    .frame(width: 6, height: 6)
-                    .help("An agent's session in this folder has exited")
-            } else if appState.folderNeedsAttention(folder.id) {
-                Circle()
-                    .fill(.orange)
-                    .frame(width: 6, height: 6)
-                    .help("An agent in this folder is waiting for you")
+            if let status = appState.folderStatus(folder.id) {
+                StatusOrb(status: status, size: 6)
             }
             if agentCount > 0 {
                 Text("\(agentCount)")
