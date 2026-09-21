@@ -65,10 +65,19 @@ final class Store {
         let standardized = url.standardizedFileURL
         guard !folders.contains(where: { $0.path.standardizedFileURL == standardized }) else { return nil }
         var folder = Folder(path: standardized)
-        folder.kind = FolderScanner.detectKind(at: standardized, scanDepth: folder.scanDepth)
+        applyScan(to: &folder)
         folders.append(folder)
         save()
         return folder
+    }
+
+    private func applyScan(to folder: inout Folder) {
+        folder.kind = FolderScanner.detectKind(at: folder.path, scanDepth: folder.scanDepth)
+        if case .repo = folder.kind {
+            folder.rootBranch = FolderScanner.readBranch(at: folder.path)
+        } else {
+            folder.rootBranch = nil
+        }
     }
 
     func removeFolder(_ folder: Folder, killAgents: Bool, tmux: TmuxController?) {
@@ -83,7 +92,7 @@ final class Store {
 
     func rescan(_ folder: Folder) {
         guard let idx = folders.firstIndex(where: { $0.id == folder.id }) else { return }
-        folders[idx].kind = FolderScanner.detectKind(at: folder.path, scanDepth: folder.scanDepth)
+        applyScan(to: &folders[idx])
         save()
     }
 

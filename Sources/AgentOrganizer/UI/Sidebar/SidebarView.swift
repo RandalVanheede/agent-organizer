@@ -26,6 +26,14 @@ struct SidebarView: View {
                     FolderHeaderView(folder: folder)
                 }
             }
+
+            if !appState.orphanSessions.isEmpty {
+                Section("Unmanaged Sessions") {
+                    ForEach(appState.orphanSessions) { orphan in
+                        OrphanSessionRowView(orphan: orphan)
+                    }
+                }
+            }
         }
         .listStyle(.sidebar)
         .toolbar {

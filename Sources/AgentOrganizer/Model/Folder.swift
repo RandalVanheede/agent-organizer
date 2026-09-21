@@ -23,6 +23,8 @@ struct Folder: Identifiable, Codable, Hashable {
     var displayName: String
     var kind: FolderKind
     var scanDepth: Int
+    /// Only set when `kind == .repo` (the folder root itself is the repo).
+    var rootBranch: String?
 
     init(id: UUID = UUID(), path: URL, scanDepth: Int = 1) {
         self.id = id
@@ -30,6 +32,7 @@ struct Folder: Identifiable, Codable, Hashable {
         self.displayName = path.lastPathComponent
         self.kind = .plain
         self.scanDepth = scanDepth
+        self.rootBranch = nil
     }
 
     /// Repos available for the cwd picker, empty for `.plain`/`.repo` (repo root is the only cwd there).

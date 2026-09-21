@@ -6,6 +6,13 @@ struct AgentRowView: View {
 
     private var preset: AgentPreset { appState.store.preset(for: agent.presetID) }
     private var status: AgentStatus { appState.agentStatuses[agent.id] ?? .unknown }
+    private var folder: Folder? { appState.store.folder(agent.folderID) }
+    private var subRepoBranch: String? {
+        folder?.subRepos.first { $0.relativePath == agent.relativeCwd }?.branch
+    }
+    private var displayTitle: String {
+        agent.title ?? appState.liveTitle(for: agent) ?? preset.name
+    }
 
     var body: some View {
         @Bindable var appState = appState
@@ -13,13 +20,18 @@ struct AgentRowView: View {
             Image(systemName: preset.icon)
                 .frame(width: 16)
             VStack(alignment: .leading, spacing: 1) {
-                Text(agent.title ?? preset.name)
+                Text(displayTitle)
                     .lineLimit(1)
                 if !agent.relativeCwd.isEmpty {
-                    Text(agent.relativeCwd)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    HStack(spacing: 4) {
+                        Text(agent.relativeCwd)
+                        if let branch = subRepoBranch {
+                            Text("· \(branch)")
+                        }
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
                 }
             }
             Spacer()

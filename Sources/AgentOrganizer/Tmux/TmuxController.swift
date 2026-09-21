@@ -72,4 +72,28 @@ final class TmuxController {
     func killSession(_ name: String) {
         run(["kill-session", "-t", name])
     }
+
+    /// Window id ("@N") -> owning session name, across the whole server.
+    /// Used to resolve `%window-renamed`/`%unlinked-window-renamed` control
+    /// mode events (which only carry a window id) back to a session.
+    func windowSessionMap() -> [String: String] {
+        let (status, output) = run(["list-windows", "-a", "-F", "#{window_id} #{session_name}"])
+        guard status == 0 else { return [:] }
+        var map: [String: String] = [:]
+        for line in output.split(separator: "\n") {
+            let parts = line.split(separator: " ")
+            guard parts.count == 2 else { continue }
+            map[String(parts[0])] = String(parts[1])
+        }
+        return map
+    }
+
+    /// The working directory a session's active pane currently sits in.
+    /// Used to guess which folder an untracked ("orphan") session belongs to.
+    func paneCurrentPath(session: String) -> String? {
+        let (status, output) = run(["display-message", "-p", "-t", session, "#{pane_current_path}"])
+        guard status == 0 else { return nil }
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
 }

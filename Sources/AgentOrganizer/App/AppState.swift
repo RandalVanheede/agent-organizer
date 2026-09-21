@@ -10,12 +10,24 @@ enum SidebarSelection: Hashable {
 /// Top-level app state: owns the persisted `Store`, the tmux connection, the
 /// terminal view cache, and current UI selection. `tmux` is optional because
 /// tmux may not be installed — callers show onboarding instead of failing.
+/// One tmux session that exists on our socket but isn't tracked as an
+/// agent — typically left behind by "Remove Folder, Keep Agents Running".
+/// Surfaced rather than hidden, so nothing running is ever silently lost.
+struct OrphanSession: Identifiable, Hashable {
+    var id: String { name }
+    var name: String
+    var cwd: String?
+    var matchingFolderID: Folder.ID?
+}
+
 @MainActor
 @Observable
 final class AppState {
     let store = Store()
     private(set) var tmux: TmuxController?
     let cache = TerminalCache()
+    private let controlClient = TmuxControlModeClient()
+    private let watcher = FolderWatcher()
 
     var selection: SidebarSelection?
     /// Non-nil while the "new agent" popover should be shown for this folder
@@ -24,21 +36,41 @@ final class AppState {
     /// Folder pending removal confirmation (asks whether to kill its agents).
     var folderPendingRemoval: Folder?
 
-    /// Refreshed by a periodic poll (see `startStatusPolling`), never by
-    /// polling from a view's body — `has-session` is cheap but still a
-    /// process spawn, so it happens on one timer, not once per rendered row.
+    /// Kept fresh primarily by tmux control-mode's `%sessions-changed`
+    /// event (near-instant); `startStatusPolling` also runs a slow fallback
+    /// poll in case the control connection ever drops silently.
     var agentStatuses: [Agent.ID: AgentStatus] = [:]
+    /// tmux session name -> latest live pane title (from control mode window
+    /// renames), overridden by a user-set `Agent.title` when present.
+    var liveTitles: [String: String] = [:]
+    var orphanSessions: [OrphanSession] = []
     private var statusTimer: Timer?
 
     init() {
         tmux = TmuxController()
         reconcileSessions()
+        wireControlClient()
+        for folder in store.folders { watcher.watch(folder) }
+        watcher.onChange = { [weak self] id in self?.handleFolderChanged(id) }
+    }
+
+    private func wireControlClient() {
+        guard let tmux else { return }
+        controlClient.start(tmux: tmux)
+        controlClient.onSessionsChanged = { [weak self] in
+            self?.refreshStatuses()
+        }
+        controlClient.onTitleChanged = { [weak self] sessionName, title in
+            self?.liveTitles[sessionName] = title
+        }
     }
 
     func startStatusPolling() {
         statusTimer?.invalidate()
         refreshStatuses()
-        statusTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+        // Slow safety net only — the control-mode client is the primary,
+        // near-instant path. If it silently dies this still catches up.
+        statusTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refreshStatuses() }
         }
     }
@@ -49,11 +81,50 @@ final class AppState {
         for agent in store.agents {
             agentStatuses[agent.id] = live.contains(agent.tmuxSession) ? .running : .exited
         }
+        refreshOrphans(live: live)
+    }
+
+    func liveTitle(for agent: Agent) -> String? {
+        liveTitles[agent.tmuxSession]
+    }
+
+    private func refreshOrphans(live: Set<String>) {
+        guard let tmux else { orphanSessions = []; return }
+        let known = Set(store.agents.map { $0.tmuxSession })
+        let untracked = live.filter { !$0.hasPrefix("__ao_") && !known.contains($0) }
+        orphanSessions = untracked.sorted().map { name in
+            let cwd = tmux.paneCurrentPath(session: name)
+            let match = cwd.flatMap { path in
+                store.folders.first { path.hasPrefix($0.path.path) }
+            }
+            return OrphanSession(name: name, cwd: cwd, matchingFolderID: match?.id)
+        }
+    }
+
+    func adopt(_ orphan: OrphanSession, into folder: Folder) {
+        var relativeCwd = ""
+        if let cwd = orphan.cwd {
+            let root = folder.path.path
+            if cwd.hasPrefix(root) {
+                relativeCwd = String(cwd.dropFirst(root.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            }
+        }
+        let agent = Agent(folderID: folder.id, relativeCwd: relativeCwd, presetID: AgentPreset.shell.id, tmuxSession: orphan.name)
+        store.addAgent(agent)
+        refreshStatuses()
+    }
+
+    func killOrphan(_ orphan: OrphanSession) {
+        tmux?.killSession(orphan.name)
+        refreshStatuses()
     }
 
     func recheckTmux() {
         tmux = TmuxController()
-        if tmux != nil { reconcileSessions() }
+        if tmux != nil {
+            reconcileSessions()
+            wireControlClient()
+        }
     }
 
     var selectedFolder: Folder? {
@@ -92,7 +163,10 @@ final class AppState {
         guard panel.runModal() == .OK else { return }
         var lastAdded: Folder?
         for url in panel.urls {
-            if let folder = store.addFolder(url: url) { lastAdded = folder }
+            if let folder = store.addFolder(url: url) {
+                lastAdded = folder
+                watcher.watch(folder)
+            }
         }
         if let lastAdded { selection = .folder(lastAdded.id) }
     }
@@ -109,6 +183,7 @@ final class AppState {
         for agent in store.agents(in: folder.id) {
             cache.discard(agent.id)
         }
+        watcher.stopWatching(folder.id)
         store.removeFolder(folder, killAgents: killAgents, tmux: tmux)
         if selectedFolder?.id == folder.id { selection = nil }
         folderPendingRemoval = nil
@@ -116,6 +191,19 @@ final class AppState {
 
     func rescan(_ folder: Folder) {
         store.rescan(folder)
+        if let updated = store.folder(folder.id) { watcher.watch(updated) }
+    }
+
+    /// Called when the filesystem watcher fires for a folder: re-scan it
+    /// (branch/sub-repo set may have changed) and re-arm the watch, since
+    /// the set of `.git/HEAD` paths worth watching may itself have changed.
+    private func handleFolderChanged(_ id: Folder.ID) {
+        guard let folder = store.folder(id) else {
+            watcher.stopWatching(id)
+            return
+        }
+        store.rescan(folder)
+        if let updated = store.folder(id) { watcher.watch(updated) }
     }
 
     // MARK: Agents

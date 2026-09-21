@@ -15,6 +15,15 @@ struct FolderHeaderView: View {
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(isSelected ? Color.accentColor : .primary)
                 .lineLimit(1)
+            if let branch = folder.rootBranch {
+                Text(branch)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(.quaternary, in: Capsule())
+            }
             Spacer()
             Button {
                 appState.newAgentPopoverFolderID = folder.id

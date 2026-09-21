@@ -18,5 +18,10 @@ struct AgentOrganizerApp: App {
         .commands {
             AppCommands(appState: appState)
         }
+
+        Settings {
+            PreferencesView()
+                .environment(appState)
+        }
     }
 }
