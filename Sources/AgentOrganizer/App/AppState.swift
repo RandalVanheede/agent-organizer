@@ -59,6 +59,16 @@ final class AppState {
     private static let shellCommands: Set<String> = ["zsh", "bash", "fish", "sh", "dash", "tcsh", "ksh", "nu", "login", "-zsh", "-bash"]
     /// Output within this window counts as "running".
     private static let runningWindow: TimeInterval = 2.5
+    /// A tool that was running and has been quiet this long is assumed to be
+    /// waiting for the user (used for tools without hooks, e.g. OpenCode).
+    private static let quietBeforeDing: TimeInterval = 4.0
+    /// Per-agent: when it last went quiet, and whether this quiet episode
+    /// already dinged. Reset whenever the agent produces output again.
+    private var quietSince: [Agent.ID: TimeInterval] = [:]
+    private var dingedThisEpisode: Set<Agent.ID> = []
+    /// Agents with a hook event in the last few seconds — hooks are the
+    /// authoritative signal, so the activity heuristic stays quiet for them.
+    private var lastHookAt: [Agent.ID: TimeInterval] = [:]
 
     init() {
         tmux = TmuxController()
@@ -80,6 +90,7 @@ final class AppState {
             return
         }
         HookLog.write("event \(event.name) pane=\(event.pane) -> \(session)")
+        lastHookAt[agent.id] = Date().timeIntervalSince1970
 
         switch event.name {
         case "UserPromptSubmit":
@@ -87,6 +98,7 @@ final class AppState {
         case "Notification", "Stop":
             let isOnScreen = NSApp.isActive && selectedAgent?.id == agent.id
             if !isOnScreen { flagAttention(agent.id) }
+            playAttentionSound()
             let folderName = store.folder(agent.folderID)?.displayName ?? ""
             let title = agent.title ?? liveTitle(for: agent) ?? store.preset(for: agent.presetID).name
             postNotification(
@@ -114,7 +126,7 @@ final class AppState {
                     let content = UNMutableNotificationContent()
                     content.title = title
                     content.body = body
-                    content.sound = .default
+                    content.sound = nil // playAttentionSound() already rang
                     content.userInfo = ["agentID": agentID.uuidString]
                     let request = UNNotificationRequest(identifier: "agent-\(agentID.uuidString)", content: content, trigger: nil)
                     center.add(request) { error in
@@ -244,12 +256,43 @@ final class AppState {
             } else {
                 continue
             }
-            if agentStatuses[agent.id] != new {
+            let old = agentStatuses[agent.id]
+            if old != new {
                 agentStatuses[agent.id] = new
                 changed = true
             }
+            // Quiet-after-running heuristic (for tools without hooks).
+            switch new {
+            case .running:
+                quietSince.removeValue(forKey: agent.id)
+                dingedThisEpisode.remove(agent.id)
+            case .waiting:
+                if old == .running { quietSince[agent.id] = now }
+                if let since = quietSince[agent.id],
+                   now - since >= Self.quietBeforeDing,
+                   !dingedThisEpisode.contains(agent.id),
+                   now - (lastHookAt[agent.id] ?? 0) > 10,
+                   !(NSApp.isActive && selectedAgent?.id == agent.id) {
+                    dingedThisEpisode.insert(agent.id)
+                    flagAttention(agent.id)
+                    playAttentionSound()
+                    HookLog.write("quiet-after-running -> attention for \(agent.tmuxSession)")
+                }
+            default:
+                quietSince.removeValue(forKey: agent.id)
+                dingedThisEpisode.remove(agent.id)
+            }
         }
         _ = changed
+    }
+
+    // MARK: Sound
+
+    func playAttentionSound() {
+        let name = store.attentionSound
+        guard !name.isEmpty, let sound = NSSound(named: NSSound.Name(name)) else { return }
+        sound.volume = 0.5
+        sound.play()
     }
 
     // MARK: Attention (hooks) & dock badge

@@ -195,6 +195,9 @@ Builds are signed with a stable self‑signed identity "Agent Organizer Dev" (`s
 
 **Claude Code snapshots hooks at startup** — sessions that were already running when hooks were installed must be restarted (tab › Restart) before they fire.
 
+### Attention sound
+Preferences › General has a system-sound picker (`Store.attentionSound`, default "Glass"; empty = silent) with a Play button. Two triggers, both routed through `AppState.playAttentionSound()`: (1) a Claude hook firing `Notification`/`Stop`; (2) tool-agnostic — `recomputeStatuses` arms a per-agent timer the moment a `running → waiting` transition happens, and dings once if it's still `waiting` after `quietBeforeDing` (4s) and the tab isn't the one on screen in the frontmost app. This covers tools with no hook support (OpenCode, custom presets). A recent hook event (`lastHookAt`, 10s) suppresses the heuristic so Claude agents don't double-ding. Each quiet episode dings at most once; a fresh `running` observation resets it.
+
 Preferences › Install writes `~/Library/Application Support/Agent Organizer/bin/ao-hook` and merges `Notification`/`Stop`/`UserPromptSubmit` entries into `~/.claude/settings.json` (backup kept). The script no‑ops unless `$TMUX` is our socket, then drops a JSON file in `…/events/`; `HookEventWatcher` (DispatchSource) maps `TMUX_PANE` → session → agent, flags attention (orange dot, Dock badge count), posts a `UNUserNotification` (click → jumps to the tab). Viewing the tab or a new prompt clears it.
 
 ### Bundled tmux (M6)

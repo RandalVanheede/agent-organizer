@@ -15,6 +15,8 @@ final class Store {
     /// agent tab was active in each folder (keyed by uuidString).
     var lastSelectedFolderID: UUID?
     var activeAgentByFolder: [String: String] = [:]
+    /// System sound name played when an agent needs attention; "" = silent.
+    var attentionSound: String = "Glass"
 
     private let fileURL: URL
 
@@ -38,6 +40,7 @@ final class Store {
         var terminalFontSize: Double?
         var lastSelectedFolderID: UUID?
         var activeAgentByFolder: [String: String]?
+        var attentionSound: String?
     }
 
     func load() {
@@ -51,6 +54,7 @@ final class Store {
         terminalFontSize = state.terminalFontSize ?? 13
         lastSelectedFolderID = state.lastSelectedFolderID
         activeAgentByFolder = state.activeAgentByFolder ?? [:]
+        attentionSound = state.attentionSound ?? "Glass"
     }
 
     func save() {
@@ -61,7 +65,8 @@ final class Store {
             killAgentsOnQuit: killAgentsOnQuit,
             terminalFontSize: terminalFontSize,
             lastSelectedFolderID: lastSelectedFolderID,
-            activeAgentByFolder: activeAgentByFolder
+            activeAgentByFolder: activeAgentByFolder,
+            attentionSound: attentionSound
         )
         guard let data = try? JSONEncoder().encode(state) else { return }
         try? data.write(to: fileURL, options: .atomic)
@@ -183,6 +188,11 @@ final class Store {
     func setUISelection(folderID: UUID?, activeAgentByFolder: [String: String]) {
         lastSelectedFolderID = folderID
         self.activeAgentByFolder = activeAgentByFolder
+        save()
+    }
+
+    func setAttentionSound(_ name: String) {
+        attentionSound = name
         save()
     }
 

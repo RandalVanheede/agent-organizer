@@ -16,6 +16,7 @@ struct PreferencesView: View {
 
 private struct GeneralPreferencesView: View {
     @Environment(AppState.self) private var appState
+    private static let sounds = ["Glass", "Tink", "Pop", "Ping", "Purr", "Blow", "Bottle", "Frog", "Funk", "Hero", "Morse", "Sosumi", "Submarine"]
     @State private var hooksInstalled = HookInstaller.isInstalled()
     @State private var hookError: String?
 
@@ -44,6 +45,21 @@ private struct GeneralPreferencesView: View {
                 if let hookError {
                     Text(hookError).font(.caption).foregroundStyle(.red)
                 }
+                HStack {
+                    Picker("Attention sound", selection: Binding(
+                        get: { store.attentionSound },
+                        set: { store.setAttentionSound($0) }
+                    )) {
+                        Text("None").tag("")
+                        Divider()
+                        ForEach(Self.sounds, id: \.self) { Text($0).tag($0) }
+                    }
+                    Button("Play") { appState.playAttentionSound() }
+                        .disabled(store.attentionSound.isEmpty)
+                }
+                Text("Plays when a Claude hook fires, or when any tool stops producing output for a few seconds while its tab isn't on screen.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             Section("Sessions") {
                 Toggle("Kill all agents when Agent Organizer quits", isOn: Binding(
