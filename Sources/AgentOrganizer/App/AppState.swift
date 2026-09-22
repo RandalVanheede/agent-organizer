@@ -96,8 +96,11 @@ final class AppState {
         case "UserPromptSubmit":
             clearAttention(agent.id)
         case "Notification", "Stop":
-            let isOnScreen = NSApp.isActive && selectedAgent?.id == agent.id
-            if !isOnScreen { flagAttention(agent.id) }
+            // The user is actively watching this exact tab: no sound, no
+            // toast/notification, no dot. Anything else - other tab, other
+            // app, app hidden/minimized - gets the full treatment.
+            guard !isBeingWatched(agent.id) else { break }
+            flagAttention(agent.id)
             playAttentionSound()
             let folderName = store.folder(agent.folderID)?.displayName ?? ""
             let title = agent.title ?? liveTitle(for: agent) ?? store.preset(for: agent.presetID).name
@@ -141,6 +144,13 @@ final class AppState {
                 }
             }
         }
+    }
+
+    /// True when the app is frontmost, its main window (not e.g. the
+    /// Preferences panel) is key, and this agent's tab is the one showing —
+    /// i.e. the user is actively watching it right now.
+    private func isBeingWatched(_ agentID: Agent.ID) -> Bool {
+        NSApp.isActive && (NSApp.keyWindow?.isMainWindow ?? false) && selectedAgent?.id == agentID
     }
 
     /// From a notification click: jump to that agent.
@@ -272,7 +282,7 @@ final class AppState {
                    now - since >= Self.quietBeforeDing,
                    !dingedThisEpisode.contains(agent.id),
                    now - (lastHookAt[agent.id] ?? 0) > 10,
-                   !(NSApp.isActive && selectedAgent?.id == agent.id) {
+                   !isBeingWatched(agent.id) {
                     dingedThisEpisode.insert(agent.id)
                     flagAttention(agent.id)
                     playAttentionSound()
