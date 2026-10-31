@@ -12,15 +12,16 @@ No Xcode project — SwiftPM plus a Makefile that assembles the `.app`. No test 
 
 ```sh
 swift build -c release          # compile only (fastest way to check for errors)
-make bundle                     # build + assemble build/Agent Organizer.app + sign
-make run                        # bundle, then open the app
+make                            # = make dmg: bundle, then build/Agent Organizer.dmg (the only thing in build/)
+make bundle                     # build + assemble .build/app.noindex/Agent Organizer.app + sign
+make run                        # bundle, then open the staged app
 make install                    # copy to /Applications
 make tmux                       # rebuild Resources/bin/tmux from source (scripts/build-tmux.sh)
 make icon                       # re-render Resources/AppIcon.iconset (scripts/make-icon.swift)
 make identity                   # create/trust the "Agent Organizer Dev" self-signed signing identity
 ```
 
-Iteration loop used throughout development: `pkill -f "Agent Organizer.app/Contents/MacOS/AgentOrganizer"; make bundle; open "build/Agent Organizer.app"`. Killing the app never kills agents (they live in tmux).
+Iteration loop used throughout development: `pkill -f "Agent Organizer.app/Contents/MacOS/AgentOrganizer"; make run`. Killing the app never kills agents (they live in tmux). The `.app` is staged under `.build/app.noindex/` (Spotlight skips `.noindex`) so only `/Applications` shows up in Spotlight — never stage it in `build/`.
 
 Runtime state lives in `~/Library/Application Support/Agent Organizer/`: `state.json` (all persisted data), `tmux.sock`, `hooks.log`, `events/`, `bin/ao-hook`. Deleting `state.json` gives a clean slate without touching tmux sessions.
 
@@ -46,9 +47,11 @@ There are no automated tests; verification has been done by:
 
 **New Agent UI.** Presented from a single `.sheet(item:)` in `MainSplitView`, driven by `AppState.newAgentPopoverFolderID`. Do not attach per-row `.popover`s inside `List` section headers — that was the first real bug (mis-anchored, failed to present once a row was selected).
 
-**⌘W.** Means Kill Agent. `AOApplication` (Info.plist `NSPrincipalClass`) strips the stock File › Close shortcut in `sendEvent` because SwiftUI claims ⌘W for Close inconsistently across launches and AppKit dispatches to the first menu item holding a key. ⇧⌘W is an explicit "Close Window" command.
+**⌘W.** Means Kill Agent (default; rebindable like every shortcut via `ShortcutAction`/`Store.shortcut(_:)`, Preferences › Shortcuts). A local `NSEvent` key-down monitor in `AppDelegate` swallows the Kill Agent combo before menu/window dispatch (ignored while `ShortcutRecorder.isRecording`) and kills the selected agent (no-op with none; Settings window still closes). Don't use an `NSApplication` subclass for this: the SwiftUI lifecycle ignores `NSPrincipalClass` (NSApp is SwiftUI's `AppKitApplication`), which is why the old `AOApplication` approach never worked. ⇧⌘W is an explicit "Close Window" command.
 
 **Claude Code hooks → attention.** `HookInstaller` copies `Resources/ao-hook.sh` to App Support/`bin/ao-hook` and merges `Notification`/`Stop`/`UserPromptSubmit` entries into `~/.claude/settings.json` (other tools' hooks untouched; one-time `.ao-backup`). The script no-ops unless `$TMUX` is our socket and writes one JSON file per event to `events/`; `HookEventWatcher` maps `TMUX_PANE` → session (subscription map, `display-message` fallback) → agent. Notification/Stop flag `attention` (orange orb, Dock badge, bounce), ring `Store.attentionSound` via `AppState.playAttentionSound()`, and post a notification. The same sound also fires tool-agnostically (no hook needed) when `recomputeStatuses` sees a `running → waiting` transition stay quiet for 4 s while the tab isn't on screen — covers OpenCode/custom presets. **System notifications are refused for non-Apple-signed builds** ("Notifications are not allowed for this application" — ad-hoc *and* self-signed alike), so `ToastCenter` shows floating in-app panels instead; the system path is used automatically if ever authorized. Claude Code snapshots hooks at startup: agents running before Install must be restarted. `hooks.log` records every step.
+
+**Remote folders (HBY-13).** `Folder.host` set = remote. Agents stay local tmux sessions whose pane runs `RemoteSession`'s ssh wrapper into a same-named session on the remote's `tmux -L agent-organizer`; no scan/watch/hooks for remote folders, and `recomputeStatuses` never marks them idle (pane is always the `sh` wrapper).
 
 **Orphans.** tmux sessions on our socket with no `Agent` record (e.g. after "Remove Folder, Keep Agents Running") are listed as "Unmanaged Sessions" in the sidebar with adopt/kill actions, never silently dropped. `AppState.reconcileSessions` only prunes agents whose session is gone; it never kills a live session.
 

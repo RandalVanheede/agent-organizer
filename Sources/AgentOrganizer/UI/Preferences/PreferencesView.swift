@@ -9,6 +9,8 @@ struct PreferencesView: View {
                 .tabItem { Label("General", systemImage: "gearshape") }
             PresetsPreferencesView()
                 .tabItem { Label("Tools", systemImage: "terminal") }
+            ShortcutsPreferencesView()
+                .tabItem { Label("Shortcuts", systemImage: "keyboard") }
         }
         .frame(width: 600, height: 380)
     }
@@ -214,5 +216,107 @@ private struct PresetEditorView: View {
         updated.command = command
         updated.resumeCommand = resumeCommand.isEmpty ? nil : resumeCommand
         if updated != preset { appState.store.updatePreset(updated) }
+    }
+}
+
+private struct ShortcutsPreferencesView: View {
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        Form {
+            Section("App") {
+                ForEach(ShortcutAction.appActions) { row($0) }
+            }
+            Section {
+                ForEach(ShortcutAction.terminalActions) { row($0) }
+            } header: {
+                Text("Terminal")
+            } footer: {
+                Text("Click a shortcut, then press the new keys. Esc cancels, Delete unbinds. A combination used by another action here moves to the new one; combinations owned by macOS or a fixed menu item (Quit, Copy, ⌘1–⌘9 tabs…) are refused.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            HStack {
+                Spacer()
+                Button("Restore Defaults") { appState.store.resetShortcuts() }
+                    .disabled(appState.store.shortcutOverrides.isEmpty)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func row(_ action: ShortcutAction) -> some View {
+        let store = appState.store
+        return LabeledContent(action.title) {
+            HStack(spacing: 6) {
+                ShortcutRecorder(combo: store.shortcut(action), store: store) { store.setShortcut(action, $0) }
+                Button {
+                    store.setShortcut(action, action.defaultCombo == .unbound ? nil : action.defaultCombo)
+                } label: {
+                    Image(systemName: "arrow.uturn.backward")
+                }
+                .buttonStyle(.borderless)
+                .help("Restore default (\(action.defaultCombo == .unbound ? "none" : action.defaultCombo.display))")
+                .opacity(store.shortcutOverrides[action.rawValue] == nil ? 0 : 1)
+            }
+        }
+    }
+}
+
+/// Click-to-record field. While recording, a local key monitor swallows the
+/// next key-down so menus and the ⌘W monitor don't fire.
+struct ShortcutRecorder: View {
+    @MainActor static var isRecording = false
+
+    let combo: KeyCombo?
+    let store: Store
+    let onChange: (KeyCombo?) -> Void
+    @State private var monitor: Any?
+    @State private var conflict: String?
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 2) {
+            Button(monitor != nil ? "Press keys…" : (combo?.display ?? "None")) {
+                monitor == nil ? start() : stop()
+            }
+            .frame(minWidth: 110)
+            if let conflict {
+                Text(conflict).font(.caption).foregroundStyle(.red)
+            }
+        }
+        .onDisappear { stop() }
+    }
+
+    private func start() {
+        conflict = nil
+        Self.isRecording = true
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            MainActor.assumeIsolated {
+                let mods = event.modifierFlags.intersection(KeyCombo.relevantFlags)
+                if mods.isEmpty && event.keyCode == 53 {          // Esc
+                    stop()
+                } else if mods.isEmpty && (event.keyCode == 51 || event.keyCode == 117) { // Delete
+                    onChange(nil)
+                    stop()
+                } else if !mods.isEmpty, let recorded = KeyCombo(event: event) {
+                    if let owner = ShortcutConflicts.owner(of: recorded, store: store) {
+                        conflict = "\(recorded.display) is used by \(owner)"
+                        NSSound.beep()
+                    } else {
+                        onChange(recorded)
+                    }
+                    stop()
+                } else {
+                    NSSound.beep()  // bare keys would break typing in the terminal
+                }
+            }
+            return nil
+        }
+    }
+
+    private func stop() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+        Self.isRecording = false
     }
 }

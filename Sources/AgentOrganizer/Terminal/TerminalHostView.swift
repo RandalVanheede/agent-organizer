@@ -12,11 +12,11 @@ struct TerminalHostView: NSViewRepresentable {
     let cache: TerminalCache
     let fontSize: Double
 
-    func makeNSView(context: Context) -> NSView {
-        NSView()
+    func makeNSView(context: Context) -> TerminalContainerView {
+        TerminalContainerView()
     }
 
-    func updateNSView(_ container: NSView, context: Context) {
+    func updateNSView(_ container: TerminalContainerView, context: Context) {
         guard let agent, let cwd else {
             container.subviews.forEach { $0.removeFromSuperview() }
             return
@@ -25,17 +25,22 @@ struct TerminalHostView: NSViewRepresentable {
         let terminalView = cache.view(for: agent, cwd: cwd, tmux: tmux, fontSize: fontSize)
         if terminalView.superview !== container {
             container.subviews.forEach { $0.removeFromSuperview() }
-            terminalView.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(terminalView)
-            NSLayoutConstraint.activate([
-                terminalView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-                terminalView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-                terminalView.topAnchor.constraint(equalTo: container.topAnchor),
-                terminalView.bottomAnchor.constraint(equalTo: container.bottomAnchor)
-            ])
+            terminalView.frame = container.bounds
         }
         DispatchQueue.main.async {
+            terminalView.needsDisplay = true
             container.window?.makeFirstResponder(terminalView)
         }
+    }
+}
+
+/// Manual frame management via `layout()` — more reliable than Auto Layout
+/// constraints inside NSViewRepresentable, which SwiftUI can invalidate
+/// during view identity changes (`.id()` swaps, conditional branch changes).
+class TerminalContainerView: NSView {
+    override func layout() {
+        super.layout()
+        subviews.forEach { $0.frame = bounds }
     }
 }

@@ -6,10 +6,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var appState: AppState?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        installCommandWMonitor()
         let center = UNUserNotificationCenter.current()
         center.delegate = self
         center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
             HookLog.write("notification authorization granted=\(granted) error=\(error?.localizedDescription ?? "none") bundle=\(Bundle.main.bundleIdentifier ?? "nil")")
+        }
+    }
+
+    /// The Kill Agent shortcut (default ⌘W) must never mean "Close Window".
+    /// SwiftUI's stock File › Close claims ⌘W inconsistently, and an
+    /// NSApplication subclass can't intercept it — the SwiftUI lifecycle
+    /// ignores `NSPrincipalClass` (NSApp is SwiftUI's own `AppKitApplication`).
+    /// A local monitor runs before menu/window key-equivalent dispatch;
+    /// returning nil swallows the key. Only the Settings window keeps plain
+    /// ⌘W = close, and nothing is intercepted while a shortcut is recorded.
+    private func installCommandWMonitor() {
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            let swallow: Bool = MainActor.assumeIsolated {
+                guard !ShortcutRecorder.isRecording else { return false }
+                if let key = NSApp.keyWindow, key.identifier?.rawValue.contains("Settings") == true {
+                    guard KeyCombo(event: event) == KeyCombo(key: "w", modifiers: .command) else { return false }
+                    key.performClose(nil)
+                    return true
+                }
+                guard let appState = self.appState,
+                      appState.store.shortcut(.killAgent)?.matches(event) == true else { return false }
+                if let agent = appState.selectedAgent { appState.killAgent(agent) }
+                return true
+            }
+            return swallow ? nil : event
         }
     }
 

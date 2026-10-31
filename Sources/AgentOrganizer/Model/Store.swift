@@ -17,6 +17,10 @@ final class Store {
     var activeAgentByFolder: [String: String] = [:]
     /// System sound name played when an agent needs attention; "" = silent.
     var attentionSound: String = "Glass"
+    /// Sidebar filter: hide folders that have no agents (= no live tmux session).
+    var sidebarOpenAgentsOnly: Bool = false
+    /// User-changed shortcuts keyed by `ShortcutAction.rawValue`; absent = default.
+    var shortcutOverrides: [String: KeyCombo] = [:]
 
     private let fileURL: URL
 
@@ -41,6 +45,8 @@ final class Store {
         var lastSelectedFolderID: UUID?
         var activeAgentByFolder: [String: String]?
         var attentionSound: String?
+        var sidebarOpenAgentsOnly: Bool?
+        var shortcutOverrides: [String: KeyCombo]?
     }
 
     func load() {
@@ -55,6 +61,8 @@ final class Store {
         lastSelectedFolderID = state.lastSelectedFolderID
         activeAgentByFolder = state.activeAgentByFolder ?? [:]
         attentionSound = state.attentionSound ?? "Glass"
+        sidebarOpenAgentsOnly = state.sidebarOpenAgentsOnly ?? false
+        shortcutOverrides = state.shortcutOverrides ?? [:]
     }
 
     func save() {
@@ -66,7 +74,9 @@ final class Store {
             terminalFontSize: terminalFontSize,
             lastSelectedFolderID: lastSelectedFolderID,
             activeAgentByFolder: activeAgentByFolder,
-            attentionSound: attentionSound
+            attentionSound: attentionSound,
+            sidebarOpenAgentsOnly: sidebarOpenAgentsOnly,
+            shortcutOverrides: shortcutOverrides
         )
         guard let data = try? JSONEncoder().encode(state) else { return }
         try? data.write(to: fileURL, options: .atomic)
@@ -74,6 +84,13 @@ final class Store {
 
     func sortedFolders() -> [Folder] {
         folders.sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
+    }
+
+    /// Folders with at least one agent. Agent records only outlive their
+    /// session until the next reconcile, so this is "folders with open agents".
+    func foldersWithAgents() -> [Folder] {
+        let ids = Set(agents.map(\.folderID))
+        return sortedFolders().filter { ids.contains($0.id) }
     }
 
     func agents(in folderID: UUID) -> [Agent] {
@@ -87,7 +104,7 @@ final class Store {
     @discardableResult
     func addFolder(url: URL) -> Folder? {
         let standardized = url.standardizedFileURL
-        guard !folders.contains(where: { $0.path.standardizedFileURL == standardized }) else { return nil }
+        guard !folders.contains(where: { !$0.isRemote && $0.path.standardizedFileURL == standardized }) else { return nil }
         var folder = Folder(path: standardized)
         applyScan(to: &folder)
         folders.append(folder)
@@ -95,7 +112,19 @@ final class Store {
         return folder
     }
 
+    /// Remote folders are never scanned (no local filesystem): always `.plain`.
+    @discardableResult
+    func addRemoteFolder(host: String, path: String) -> Folder? {
+        let url = URL(fileURLWithPath: path).standardizedFileURL
+        guard !folders.contains(where: { $0.host == host && $0.path == url }) else { return nil }
+        let folder = Folder(path: url, host: host)
+        folders.append(folder)
+        save()
+        return folder
+    }
+
     private func applyScan(to folder: inout Folder) {
+        guard !folder.isRemote else { return }
         folder.kind = FolderScanner.detectKind(at: folder.path, scanDepth: folder.scanDepth)
         if case .repo = folder.kind {
             folder.rootBranch = FolderScanner.readBranch(at: folder.path)
@@ -107,7 +136,7 @@ final class Store {
     func removeFolder(_ folder: Folder, killAgents: Bool, tmux: TmuxController?) {
         let related = agents.filter { $0.folderID == folder.id }
         if killAgents {
-            for agent in related { tmux?.killSession(agent.tmuxSession) }
+            for agent in related { killSessions(of: agent, host: folder.host, tmux: tmux) }
         }
         agents.removeAll { $0.folderID == folder.id }
         folders.removeAll { $0.id == folder.id }
@@ -130,9 +159,14 @@ final class Store {
     }
 
     func removeAgent(_ agent: Agent, tmux: TmuxController?) {
-        tmux?.killSession(agent.tmuxSession)
+        killSessions(of: agent, host: folder(agent.folderID)?.host, tmux: tmux)
         agents.removeAll { $0.id == agent.id }
         save()
+    }
+
+    private func killSessions(of agent: Agent, host: String?, tmux: TmuxController?) {
+        tmux?.killSession(agent.tmuxSession)
+        if let host { RemoteSession.kill(host: host, session: agent.tmuxSession) }
     }
 
     func renameAgent(_ agent: Agent, to title: String?) {
@@ -196,8 +230,42 @@ final class Store {
         save()
     }
 
+    func setSidebarOpenAgentsOnly(_ value: Bool) {
+        sidebarOpenAgentsOnly = value
+        save()
+    }
+
     func setTerminalFontSize(_ size: Double) {
         terminalFontSize = min(max(size, 9), 24)
         save()
+    }
+
+    // MARK: Shortcuts
+
+    /// nil = unbound.
+    func shortcut(_ action: ShortcutAction) -> KeyCombo? {
+        let combo = shortcutOverrides[action.rawValue] ?? action.defaultCombo
+        return combo == .unbound ? nil : combo
+    }
+
+    /// Binds `combo` (nil = unbind). A combo can belong to one action only,
+    /// so any other action holding it is unbound.
+    func setShortcut(_ action: ShortcutAction, _ combo: KeyCombo?) {
+        if let combo {
+            for other in ShortcutAction.allCases where other != action && shortcut(other) == combo {
+                storeShortcut(other, .unbound)
+            }
+        }
+        storeShortcut(action, combo ?? .unbound)
+        save()
+    }
+
+    func resetShortcuts() {
+        shortcutOverrides = [:]
+        save()
+    }
+
+    private func storeShortcut(_ action: ShortcutAction, _ combo: KeyCombo) {
+        shortcutOverrides[action.rawValue] = combo == action.defaultCombo ? nil : combo
     }
 }

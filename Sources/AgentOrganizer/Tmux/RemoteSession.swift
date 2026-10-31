@@ -1,0 +1,70 @@
+import Foundation
+
+/// Agents in a remote folder (HBY-13). The agent is still a *local* tmux
+/// session (so status, persistence and the terminal cache work unchanged),
+/// but what runs in it is `ssh -t <host>` attached to a same-named tmux
+/// session on the remote's own `-L agent-organizer` server. That remote
+/// session is where the tool really lives, so it survives the laptop
+/// sleeping or the network dropping; the local side reconnects on its own.
+enum RemoteSession {
+    /// Remote tmux server name (`tmux -L`), kept apart from the user's own.
+    private static let tmux = "tmux -L agent-organizer"
+
+    /// Typed into the local session's login shell. `sh -c` so the reconnect
+    /// loop works whatever the user's local shell is (fish etc.).
+    static func launchCommand(host: String, session: String, cwd: String, command: String?) -> String {
+        var create = "\(tmux) new-session -d -s \(session) -c \(quote(cwd))"
+        if let command, !command.isEmpty {
+            create += " && \(tmux) send-keys -t \(session) -- \(quote(command)) Enter"
+        }
+        // Re-running `create` on reconnect is harmless: new-session fails
+        // for an existing session, so send-keys is skipped.
+        return wrap(host: host, session: session, firstConnect: create, reconnect: create)
+    }
+
+    /// Restart: kill whatever runs in the remote pane, start `command` fresh.
+    static func restartCommand(host: String, session: String, cwd: String, command: String?) -> String {
+        var respawn = "\(tmux) respawn-pane -k -c \(quote(cwd)) -t \(session)"
+        if let command, !command.isEmpty {
+            respawn += " && \(tmux) send-keys -t \(session) -- \(quote(command)) Enter"
+        }
+        return wrap(host: host, session: session, firstConnect: respawn, reconnect: nil)
+    }
+
+    /// Fire-and-forget: killing the local session only drops the ssh link,
+    /// the remote session must be killed explicitly. Needs key auth
+    /// (BatchMode); otherwise the remote session lingers and is logged.
+    static func kill(host: String, session: String) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+        process.arguments = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", host, "\(tmux) kill-session -t \(session)"]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        process.terminationHandler = { p in
+            if p.terminationStatus != 0 {
+                HookLog.write("remote kill \(session) on \(host) failed (status \(p.terminationStatus))")
+            }
+        }
+        try? process.run()
+    }
+
+    /// First connect runs `firstConnect` (create / respawn), then attaches.
+    /// ssh exits 255 only on connection errors: retry (`reconnect`, then
+    /// attach). A normal exit (remote session ended, user detached) stops.
+    private static func wrap(host: String, session: String, firstConnect: String, reconnect: String?) -> String {
+        var attach = "\(tmux) set -g status off; \(tmux) set -g mouse on; exec \(tmux) attach -t \(session)"
+        let first = "\(firstConnect); \(attach)"
+        if let reconnect { attach = "\(reconnect); \(attach)" }
+        let script = """
+        ssh -t \(quote(host)) \(quote(first)); \
+        while [ $? -eq 255 ]; do echo 'Connection lost, reconnecting in 3s…'; sleep 3; \
+        ssh -t \(quote(host)) \(quote(attach)); done
+        """
+        return "clear; sh -c \(quote(script))"
+    }
+
+    /// POSIX single-quote; the same escape also works in fish.
+    static func quote(_ s: String) -> String {
+        "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+}

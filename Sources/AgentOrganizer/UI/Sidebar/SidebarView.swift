@@ -5,13 +5,15 @@ import SwiftUI
 struct SidebarView: View {
     @Environment(AppState.self) private var appState
 
+    private var visibleFolders: [Folder] { appState.sidebarFolders }
+
     var body: some View {
         List(selection: Binding(
             get: { appState.selectedFolderID },
             set: { appState.selectFolder($0) }
         )) {
             Section("Folders") {
-                ForEach(appState.store.sortedFolders()) { folder in
+                ForEach(visibleFolders) { folder in
                     FolderRowView(folder: folder)
                         .tag(folder.id)
                 }
@@ -28,17 +30,37 @@ struct SidebarView: View {
         .listStyle(.sidebar)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button {
-                    appState.presentAddFolderPanel()
+                Menu {
+                    Button("Add Remote Folder…") { appState.presentAddRemoteFolderPanel() }
                 } label: {
                     Label("Add Folder", systemImage: "folder.badge.plus")
+                } primaryAction: {
+                    appState.presentAddFolderPanel()
                 }
-                .help("Add Folder…")
+                .help("Add Folder… (hold for Remote)")
+            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if !appState.store.folders.isEmpty {
+                Picker("Show", selection: Binding(
+                    get: { appState.store.sidebarOpenAgentsOnly },
+                    set: { appState.store.setSidebarOpenAgentsOnly($0) }
+                )) {
+                    Text("Show all").tag(false)
+                    Text("Open agents only").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .padding(8)
             }
         }
         .overlay {
             if appState.store.folders.isEmpty {
                 EmptySidebarView()
+            } else if visibleFolders.isEmpty {
+                Text("No folders with open agents")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
     }

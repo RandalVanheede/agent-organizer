@@ -17,6 +17,7 @@ final class FolderWatcher {
 
     func watch(_ folder: Folder) {
         stopWatching(folder.id)
+        guard !folder.isRemote else { return }
 
         var paths = [folder.path.path]
         switch folder.kind {

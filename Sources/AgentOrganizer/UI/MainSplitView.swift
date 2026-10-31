@@ -2,14 +2,22 @@ import SwiftUI
 
 struct MainSplitView: View {
     @Environment(AppState.self) private var appState
+    @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
 
     var body: some View {
         @Bindable var appState = appState
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             SidebarView()
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 400)
         } detail: {
             DetailView()
+                .toolbar {
+                    if columnVisibility == .detailOnly {
+                        ToolbarItem(placement: .navigation) {
+                            FolderSwitcherMenu()
+                        }
+                    }
+                }
         }
         .sheet(item: Binding(
             get: { appState.newAgentPopoverFolderID.flatMap { appState.store.folder($0) } },

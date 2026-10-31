@@ -101,6 +101,7 @@ private struct AgentTabView: View {
 
     private var preset: AgentPreset { appState.store.preset(for: agent.presetID) }
     private var status: AgentStatus { appState.agentStatuses[agent.id] ?? .unknown }
+    private var resourceUsage: ResourceUsage? { appState.resourceUsage(for: agent) }
     private var displayTitle: String {
         agent.title ?? appState.liveTitle(for: agent) ?? preset.name
     }
@@ -109,6 +110,10 @@ private struct AgentTabView: View {
         let branch = appState.store.folder(agent.folderID)?
             .subRepos.first { $0.relativePath == agent.relativeCwd }?.branch
         return branch.map { "\(agent.relativeCwd) · \($0)" } ?? agent.relativeCwd
+    }
+    private var secondaryLine: String? {
+        let parts = [subtitle, resourceUsage?.compactLabel].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     var body: some View {
@@ -123,8 +128,8 @@ private struct AgentTabView: View {
                     Text(displayTitle)
                         .font(.callout)
                         .lineLimit(1)
-                    if let subtitle {
-                        Text(subtitle)
+                    if let secondaryLine {
+                        Text(secondaryLine)
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)

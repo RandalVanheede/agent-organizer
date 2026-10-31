@@ -11,22 +11,26 @@ import SwiftTerm
 /// this process, so nothing the user was running is lost.
 @MainActor
 final class TerminalCache {
-    private var views: [Agent.ID: LocalProcessTerminalView] = [:]
+    private var views: [Agent.ID: AOTerminalView] = [:]
     private var delegates: [Agent.ID: TerminalAttachDelegate] = [:]
+    /// Source of the terminal key bindings; set by `AppState`.
+    weak var store: Store?
 
-    func view(for agent: Agent, cwd: URL, tmux: TmuxController, fontSize: Double) -> LocalProcessTerminalView {
+    func view(for agent: Agent, cwd: URL, tmux: TmuxController, fontSize: Double) -> AOTerminalView {
         if let existing = views[agent.id] {
             return existing
         }
 
-        let view = LocalProcessTerminalView(frame: .zero)
+        let view = AOTerminalView(frame: .zero)
+        view.store = store
         view.font = .monospacedSystemFont(ofSize: fontSize, weight: .regular)
         let delegate = TerminalAttachDelegate()
         view.processDelegate = delegate
         delegates[agent.id] = delegate
 
-        tmux.ensureSession(name: agent.tmuxSession, cwd: cwd, command: nil)
-
+        // Never create the session here: this runs inside a SwiftUI update,
+        // and a stale agent (just killed) would resurrect as an orphan.
+        // Sessions are created by `AppState.createAgent` only.
         let args = ["-S", tmux.socketPath] + (tmux.confPath.map { ["-f", $0] } ?? []) + ["attach-session", "-t", agent.tmuxSession]
         view.startProcess(executable: tmux.tmuxBinary, args: args)
 
@@ -69,5 +73,22 @@ final class TerminalAttachDelegate: LocalProcessTerminalViewDelegate {
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
     func processTerminated(source: TerminalView, exitCode: Int32?) {
         terminated = true
+    }
+}
+
+/// Terminal.app-style word/line navigation (bindings from
+/// `ShortcutAction.terminalActions`). SwiftTerm's own keyDown can't be
+/// overridden (not `open`), but AppKit offers every key event to
+/// `performKeyEquivalent` first, so intercept them there.
+final class AOTerminalView: LocalProcessTerminalView {
+    weak var store: Store?
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard event.type == .keyDown, let store,
+              let bytes = ShortcutAction.terminalActions
+                .first(where: { store.shortcut($0)?.matches(event) == true })?.terminalBytes
+        else { return super.performKeyEquivalent(with: event) }
+        send(bytes)
+        return true
     }
 }

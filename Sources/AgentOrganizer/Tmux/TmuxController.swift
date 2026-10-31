@@ -31,13 +31,17 @@ final class TmuxController {
         let outPipe = Pipe()
         process.standardOutput = outPipe
         process.standardError = outPipe
+        // Not `waitUntilExit()`: it spins the run loop, which re-enters
+        // SwiftUI when called from inside a view update (crashed the app).
+        let done = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in done.signal() }
         do {
             try process.run()
         } catch {
             return (-1, "")
         }
-        process.waitUntilExit()
         let data = outPipe.fileHandleForReading.readDataToEndOfFile()
+        done.wait()
         return (process.terminationStatus, String(data: data, encoding: .utf8) ?? "")
     }
 
@@ -105,6 +109,19 @@ final class TmuxController {
         guard status == 0 else { return nil }
         let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// Session name → pane PID for every pane on this socket.
+    func panePids() -> [String: pid_t] {
+        let (status, output) = run(["list-panes", "-a", "-F", "#{session_name} #{pane_pid}"])
+        guard status == 0 else { return [:] }
+        var map: [String: pid_t] = [:]
+        for line in output.split(separator: "\n") {
+            let parts = line.split(separator: " ")
+            guard parts.count == 2, let pid = pid_t(parts[1]) else { continue }
+            map[String(parts[0])] = pid
+        }
+        return map
     }
 
     /// The working directory a session's active pane currently sits in.

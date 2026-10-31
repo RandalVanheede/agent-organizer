@@ -8,23 +8,33 @@ struct AppCommands: Commands {
             Button("Add Folder…") {
                 appState.presentAddFolderPanel()
             }
-            .keyboardShortcut("o", modifiers: [.command, .shift])
+            .keyboardShortcut(appState.store.shortcut(.addFolder)?.keyboardShortcut)
+
+            Button("Add Remote Folder…") {
+                appState.presentAddRemoteFolderPanel()
+            }
 
             Button("New Agent…") {
                 appState.requestNewAgentPopover()
             }
-            .keyboardShortcut("n", modifiers: [.command])
+            .keyboardShortcut(appState.store.shortcut(.newAgent)?.keyboardShortcut)
+            .disabled(!appState.canCreateNewAgent)
+
+            Button("New Shell") {
+                appState.newShellInSelectedFolder()
+            }
+            .keyboardShortcut(appState.store.shortcut(.newShell)?.keyboardShortcut)
             .disabled(!appState.canCreateNewAgent)
 
             Divider()
 
-            // ⌘W belongs to "Kill Agent" (Agent menu); SwiftUI drops the stock
-            // Close item's shortcut when another command claims ⌘W, so the
-            // window gets an explicit ⇧⌘W here instead.
+            // ⌘W (default) belongs to "Kill Agent" (Agent menu); SwiftUI drops
+            // the stock Close item's shortcut when another command claims ⌘W,
+            // so the window gets an explicit shortcut (default ⇧⌘W) instead.
             Button("Close Window") {
                 NSApp.keyWindow?.performClose(nil)
             }
-            .keyboardShortcut("w", modifiers: [.command, .shift])
+            .keyboardShortcut(appState.store.shortcut(.closeWindow)?.keyboardShortcut)
         }
 
         CommandMenu("Agent") {
@@ -33,24 +43,38 @@ struct AppCommands: Commands {
                     appState.restartAgent(agent)
                 }
             }
+            .keyboardShortcut(appState.store.shortcut(.restartAgent)?.keyboardShortcut)
             .disabled(appState.selectedAgent == nil)
 
             Divider()
 
             Button("Next Tab") { appState.selectAdjacentAgent(by: 1) }
-                .keyboardShortcut("]", modifiers: [.command, .shift])
+                .keyboardShortcut(appState.store.shortcut(.nextTab)?.keyboardShortcut)
             Button("Previous Tab") { appState.selectAdjacentAgent(by: -1) }
-                .keyboardShortcut("[", modifiers: [.command, .shift])
+                .keyboardShortcut(appState.store.shortcut(.previousTab)?.keyboardShortcut)
+
+            Button("Next Folder") { appState.selectAdjacentFolder(by: 1) }
+                .keyboardShortcut(appState.store.shortcut(.nextFolder)?.keyboardShortcut)
+            Button("Previous Folder") { appState.selectAdjacentFolder(by: -1) }
+                .keyboardShortcut(appState.store.shortcut(.previousFolder)?.keyboardShortcut)
 
             Divider()
 
-            // ⌘W kills the current agent (see File › Close Window for ⇧⌘W).
+            ForEach(1...9, id: \.self) { n in
+                Button("Tab \(n)") { appState.selectAgentAtIndex(n - 1) }
+                    .keyboardShortcut(KeyEquivalent(Character("\(n)")), modifiers: [.command])
+            }
+
+            Divider()
+
+            // Kills the current agent (default ⌘W). The key itself is handled
+            // by AppDelegate's event monitor; this shortcut is for the menu display.
             Button("Kill Agent") {
                 if let agent = appState.selectedAgent {
                     appState.killAgent(agent)
                 }
             }
-            .keyboardShortcut("w", modifiers: [.command])
+            .keyboardShortcut(appState.store.shortcut(.killAgent)?.keyboardShortcut)
             .disabled(appState.selectedAgent == nil)
         }
     }

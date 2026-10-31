@@ -22,6 +22,7 @@ final class AppState {
     let store = Store()
     private(set) var tmux: TmuxController?
     let cache = TerminalCache()
+    let resourceMonitor = ResourceMonitor()
     private let controlClient = TmuxControlModeClient()
     private let watcher = FolderWatcher()
     private let hookWatcher = HookEventWatcher()
@@ -71,6 +72,7 @@ final class AppState {
     private var lastHookAt: [Agent.ID: TimeInterval] = [:]
 
     init() {
+        cache.store = store
         tmux = TmuxController()
         reconcileSessions()
         wireControlClient()
@@ -118,8 +120,8 @@ final class AppState {
     /// non-Apple-signed app → "Notifications are not allowed") an in-app
     /// floating toast. Dock badge + bounce happen regardless.
     private func postNotification(agentID: Agent.ID, title: String, body: String) {
-        if !NSApp.isActive {
-            NSApp.requestUserAttention(.informationalRequest)
+        if let app = NSApp, !app.isActive {
+            app.requestUserAttention(.informationalRequest)
         }
         let center = UNUserNotificationCenter.current()
         center.getNotificationSettings { settings in
@@ -150,14 +152,15 @@ final class AppState {
     /// Preferences panel) is key, and this agent's tab is the one showing —
     /// i.e. the user is actively watching it right now.
     private func isBeingWatched(_ agentID: Agent.ID) -> Bool {
-        NSApp.isActive && (NSApp.keyWindow?.isMainWindow ?? false) && selectedAgent?.id == agentID
+        guard let app = NSApp else { return false }
+        return app.isActive && (app.keyWindow?.isMainWindow ?? false) && selectedAgent?.id == agentID
     }
 
     /// From a notification click: jump to that agent.
     func selectAgent(id: Agent.ID) {
         guard let agent = store.agents.first(where: { $0.id == id }) else { return }
         selectAgent(agent)
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp?.activate(ignoringOtherApps: true)
     }
 
     private func restoreUISelection() {
@@ -192,6 +195,14 @@ final class AppState {
         persistUISelection()
     }
 
+    /// ⌘1–⌘9 — jump to the Nth agent tab in the selected folder.
+    func selectAgentAtIndex(_ index: Int) {
+        guard let folder = selectedFolder else { return }
+        let agents = store.agents(in: folder.id)
+        guard index < agents.count else { return }
+        selectAgent(agents[index])
+    }
+
     /// ⇧⌘] / ⇧⌘[ — cycle tabs within the selected folder.
     func selectAdjacentAgent(by offset: Int) {
         guard let folder = selectedFolder else { return }
@@ -200,6 +211,23 @@ final class AppState {
         let idx = selectedAgent.flatMap { a in agents.firstIndex { $0.id == a.id } } ?? 0
         let next = ((idx + offset) % agents.count + agents.count) % agents.count
         selectAgent(agents[next])
+    }
+
+    /// Folders as the sidebar lists them (respects the "open agents only" toggle).
+    var sidebarFolders: [Folder] {
+        store.sidebarOpenAgentsOnly ? store.foldersWithAgents() : store.sortedFolders()
+    }
+
+    /// ⌘↑ / ⌘↓ — move through the sidebar's folders (no wrap, like a list).
+    func selectAdjacentFolder(by offset: Int) {
+        let folders = sidebarFolders
+        guard !folders.isEmpty else { return }
+        guard let idx = folders.firstIndex(where: { $0.id == selectedFolderID }) else {
+            selectFolder(folders[offset > 0 ? 0 : folders.count - 1].id)
+            return
+        }
+        let next = min(max(idx + offset, 0), folders.count - 1)
+        if next != idx { selectFolder(folders[next].id) }
     }
 
     private func wireControlClient() {
@@ -219,6 +247,7 @@ final class AppState {
     func startStatusPolling() {
         statusTimer?.invalidate()
         refreshStatuses()
+        if let tmux { resourceMonitor.start(tmux: tmux) }
         // Slow safety net only — the control-mode client is the primary,
         // near-instant path. If it silently dies this still catches up.
         statusTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { [weak self] _ in
@@ -247,12 +276,15 @@ final class AppState {
     func recomputeStatuses() {
         let now = Date().timeIntervalSince1970
         var changed = false
+        let remoteFolders = Set(store.folders.filter(\.isRemote).map(\.id))
         for agent in store.agents {
             let new: AgentStatus
             if !liveSessions.isEmpty && !liveSessions.contains(agent.tmuxSession) {
                 new = .exited
             } else if let pane = controlClient.panes[agent.tmuxSession] {
-                if Self.shellCommands.contains(pane.command) {
+                // Remote panes always run the local `sh -c` ssh wrapper, so
+                // "only a shell" can't be told apart there: never idle.
+                if Self.shellCommands.contains(pane.command) && !remoteFolders.contains(agent.folderID) {
                     new = .idle
                 } else if attention.contains(agent.id) {
                     new = .waiting
@@ -271,14 +303,18 @@ final class AppState {
                 agentStatuses[agent.id] = new
                 changed = true
             }
-            // Quiet-after-running heuristic (for tools without hooks).
+            // Quiet-after-running heuristic (for persistent tools without
+            // hooks, e.g. OpenCode). Plain shells go quiet between commands
+            // all the time — no ding for those.
+            let isToolAgent = !store.preset(for: agent.presetID).command.isEmpty
             switch new {
             case .running:
                 quietSince.removeValue(forKey: agent.id)
                 dingedThisEpisode.remove(agent.id)
             case .waiting:
                 if old == .running { quietSince[agent.id] = now }
-                if let since = quietSince[agent.id],
+                if isToolAgent,
+                   let since = quietSince[agent.id],
                    now - since >= Self.quietBeforeDing,
                    !dingedThisEpisode.contains(agent.id),
                    now - (lastHookAt[agent.id] ?? 0) > 10,
@@ -320,7 +356,7 @@ final class AppState {
     }
 
     private func updateDockBadge() {
-        NSApp.dockTile.badgeLabel = attention.isEmpty ? nil : "\(attention.count)"
+        NSApp?.dockTile.badgeLabel = attention.isEmpty ? nil : "\(attention.count)"
     }
 
     func sessionName(forPaneID paneID: String) -> String? {
@@ -331,6 +367,11 @@ final class AppState {
         liveTitles[agent.tmuxSession]
     }
 
+    func resourceUsage(for agent: Agent) -> ResourceUsage? {
+        let usage = resourceMonitor.usageBySession[agent.tmuxSession]
+        return usage?.isNegligible == true ? nil : usage
+    }
+
     private func refreshOrphans(live: Set<String>) {
         guard let tmux else { orphanSessions = []; return }
         let known = Set(store.agents.map { $0.tmuxSession })
@@ -338,7 +379,7 @@ final class AppState {
         orphanSessions = untracked.sorted().map { name in
             let cwd = tmux.paneCurrentPath(session: name)
             let match = cwd.flatMap { path in
-                store.folders.first { path.hasPrefix($0.path.path) }
+                store.folders.first { !$0.isRemote && path.hasPrefix($0.path.path) }
             }
             return OrphanSession(name: name, cwd: cwd, matchingFolderID: match?.id)
         }
@@ -431,6 +472,38 @@ final class AppState {
         if let lastAdded { selectFolder(lastAdded.id) }
     }
 
+    /// HBY-13: a folder on another machine, reached over ssh. Uses the
+    /// user's ssh setup as-is (config aliases, keys, agent).
+    func presentAddRemoteFolderPanel() {
+        let alert = NSAlert()
+        alert.messageText = "Add Remote Folder"
+        alert.informativeText = "Agents run in tmux on the remote host (which needs tmux and the agent CLIs installed) and keep running while this Mac is offline."
+        let host = NSTextField(string: "")
+        host.placeholderString = "Host — user@devbox or an ~/.ssh/config alias"
+        let path = NSTextField(string: "")
+        path.placeholderString = "Absolute path — /home/you/project"
+        let stack = NSStackView(views: [host, path])
+        stack.orientation = .vertical
+        stack.frame = NSRect(x: 0, y: 0, width: 320, height: 52)
+        host.frame.size.width = 320
+        path.frame.size.width = 320
+        alert.accessoryView = stack
+        alert.window.initialFirstResponder = host
+        alert.addButton(withTitle: "Add")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let h = host.stringValue.trimmingCharacters(in: .whitespaces)
+        let p = path.stringValue.trimmingCharacters(in: .whitespaces)
+        // shortcut: no `~` expansion (remote home unknown locally); require absolute.
+        guard !h.isEmpty, !h.contains(" "), p.hasPrefix("/") else {
+            let err = NSAlert()
+            err.messageText = "Need a host and an absolute path (starting with /)."
+            err.runModal()
+            return
+        }
+        if let folder = store.addRemoteFolder(host: h, path: p) { selectFolder(folder.id) }
+    }
+
     func requestRemoveFolder(_ folder: Folder) {
         if store.agents(in: folder.id).isEmpty {
             removeFolder(folder, killAgents: false)
@@ -477,11 +550,22 @@ final class AppState {
         newAgentPopoverFolderID = folder.id
     }
 
+    /// ⌘T — plain shell at the selected folder's root, no sheet.
+    func newShellInSelectedFolder() {
+        guard let folder = selectedFolder else { return }
+        createAgent(folder: folder, preset: store.preset(for: AgentPreset.shell.id), relativeCwd: "")
+    }
+
     func createAgent(folder: Folder, preset: AgentPreset, relativeCwd: String) {
         let session = "ao_\(Self.slug(folder.displayName))_\(UUID().uuidString.prefix(8).lowercased())"
         let agent = Agent(folderID: folder.id, relativeCwd: relativeCwd, presetID: preset.id, tmuxSession: session)
         let cwd = agent.resolvedCwd(folderPath: folder.path)
-        tmux?.ensureSession(name: session, cwd: cwd, command: preset.command.isEmpty ? nil : preset.command)
+        if let host = folder.host {
+            let launch = RemoteSession.launchCommand(host: host, session: session, cwd: cwd.path, command: preset.command)
+            tmux?.ensureSession(name: session, cwd: FileManager.default.homeDirectoryForCurrentUser, command: launch)
+        } else {
+            tmux?.ensureSession(name: session, cwd: cwd, command: preset.command.isEmpty ? nil : preset.command)
+        }
         store.addAgent(agent)
         selectAgent(agent)
         newAgentPopoverFolderID = nil
@@ -504,6 +588,12 @@ final class AppState {
         guard let folder = store.folder(agent.folderID) else { return }
         let preset = store.preset(for: agent.presetID)
         let command = preset.resumeCommand ?? preset.command
+        if let host = folder.host {
+            let restart = RemoteSession.restartCommand(host: host, session: agent.tmuxSession,
+                                                       cwd: agent.resolvedCwd(folderPath: folder.path).path, command: command)
+            tmux?.respawn(session: agent.tmuxSession, cwd: FileManager.default.homeDirectoryForCurrentUser, command: restart)
+            return
+        }
         tmux?.respawn(session: agent.tmuxSession,
                       cwd: agent.resolvedCwd(folderPath: folder.path),
                       command: command.isEmpty ? nil : command)

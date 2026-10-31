@@ -3,13 +3,17 @@ EXECUTABLE := AgentOrganizer
 BUNDLE_ID := randalv.agent-organizer
 CONFIG := release
 BUILD_BIN_DIR := $(shell swift build -c $(CONFIG) --show-bin-path)
-APP_DIR := build/$(APP_NAME).app
+# Staged outside build/ in a `.noindex` dir so Spotlight never lists a second
+# copy next to /Applications; build/ only ever holds the .dmg.
+APP_DIR := .build/app.noindex/$(APP_NAME).app
 # Stable self-signed identity (scripts/make-signing-identity.sh). macOS ties
 # notification/TCC permission to the code signature; an ad-hoc signature
 # changes every build, so notifications are refused. Falls back to ad-hoc.
 SIGN_IDENTITY ?= $(shell security find-identity -v -p codesigning 2>/dev/null | grep -q '"Agent Organizer Dev"' && echo "Agent Organizer Dev" || echo "-")
 
-.PHONY: build bundle run install clean tmux icon identity
+.DEFAULT_GOAL := dmg
+
+.PHONY: build bundle run install clean tmux icon identity dmg
 
 identity:
 	scripts/make-signing-identity.sh
@@ -24,7 +28,7 @@ build:
 	swift build -c $(CONFIG)
 
 bundle: build
-	rm -rf "$(APP_DIR)"
+	rm -rf "$(APP_DIR)" "build/$(APP_NAME).app"
 	mkdir -p "$(APP_DIR)/Contents/MacOS"
 	mkdir -p "$(APP_DIR)/Contents/Resources"
 	cp "$(BUILD_BIN_DIR)/$(EXECUTABLE)" "$(APP_DIR)/Contents/MacOS/$(EXECUTABLE)"
@@ -51,6 +55,22 @@ install: bundle
 	rm -rf "/Applications/$(APP_NAME).app"
 	cp -R "$(APP_DIR)" "/Applications/"
 	@echo "Installed to /Applications/$(APP_NAME).app"
+
+DMG_NAME := $(APP_NAME).dmg
+DMG_DIR := .build/dmg-staging.noindex
+
+dmg: bundle
+	rm -rf "$(DMG_DIR)" "build/$(DMG_NAME)"
+	mkdir -p "$(DMG_DIR)" build
+	cp -R "$(APP_DIR)" "$(DMG_DIR)/"
+	ln -s /Applications "$(DMG_DIR)/Applications"
+	hdiutil create -volname "$(APP_NAME)" -srcfolder "$(DMG_DIR)" \
+		-ov -format UDZO "build/$(DMG_NAME)"
+	rm -rf "$(DMG_DIR)"
+	@if [ "$(SIGN_IDENTITY)" != "-" ]; then \
+		codesign --force --sign "$(SIGN_IDENTITY)" "build/$(DMG_NAME)"; \
+	fi
+	@echo "Created build/$(DMG_NAME)"
 
 clean:
 	rm -rf .build build

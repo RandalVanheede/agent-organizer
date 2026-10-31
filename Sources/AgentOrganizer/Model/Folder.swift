@@ -25,11 +25,17 @@ struct Folder: Identifiable, Codable, Hashable {
     var scanDepth: Int
     /// Only set when `kind == .repo` (the folder root itself is the repo).
     var rootBranch: String?
+    /// ssh destination (`user@host` or a `~/.ssh/config` alias) for a remote
+    /// folder; `path` is then an absolute path on that host. nil = local.
+    var host: String?
 
-    init(id: UUID = UUID(), path: URL, scanDepth: Int = 1) {
+    var isRemote: Bool { host != nil }
+
+    init(id: UUID = UUID(), path: URL, scanDepth: Int = 1, host: String? = nil) {
         self.id = id
         self.path = path
-        self.displayName = path.lastPathComponent
+        self.host = host
+        self.displayName = host.map { "\(path.lastPathComponent) (\($0))" } ?? path.lastPathComponent
         self.kind = .plain
         self.scanDepth = scanDepth
         self.rootBranch = nil

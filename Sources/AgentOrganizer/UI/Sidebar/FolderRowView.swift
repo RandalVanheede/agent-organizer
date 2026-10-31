@@ -41,8 +41,10 @@ struct FolderRowView: View {
         .contextMenu {
             Button("New Agent…") { appState.newAgentPopoverFolderID = folder.id }
             Button("Rescan") { appState.rescan(folder) }
-            Button("Reveal in Finder") {
-                NSWorkspace.shared.activateFileViewerSelecting([folder.path])
+            if !folder.isRemote {
+                Button("Reveal in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([folder.path])
+                }
             }
             Divider()
             Button("Remove Folder", role: .destructive) { appState.requestRemoveFolder(folder) }
@@ -50,6 +52,7 @@ struct FolderRowView: View {
     }
 
     private var kindIcon: String {
+        if folder.isRemote { return "network" }
         switch folder.kind {
         case .repo: return "folder.fill.badge.gearshape"
         case .container: return "folder.fill"

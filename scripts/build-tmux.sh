@@ -46,17 +46,11 @@ rm -rf "tmux-$TMUX_VERSION"
 tar xzf "$TMUX_TAR"
 cd "tmux-$TMUX_VERSION"
 
-# Prefer a static ncursesw if Homebrew has one (wide-char aware); else the
-# macOS system ncurses, which tmux supports.
+# Always the macOS system ncurses: a static Homebrew ncursesw bakes in
+# /opt/homebrew/.../terminfo and fails with "can't find terminfo database"
+# on machines without Homebrew's ncurses.
 NCURSES_CFLAGS=""
 NCURSES_LIBS="-lncurses"
-for candidate in /opt/homebrew/opt/ncurses /usr/local/opt/ncurses; do
-  if [ -f "$candidate/lib/libncursesw.a" ]; then
-    NCURSES_CFLAGS="-I$candidate/include -I$candidate/include/ncursesw"
-    NCURSES_LIBS="$candidate/lib/libncursesw.a"
-    break
-  fi
-done
 
 # Keep pkg-config from discovering Homebrew's libevent/utf8proc/jemalloc.
 export PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig"
