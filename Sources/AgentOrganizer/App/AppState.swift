@@ -478,16 +478,16 @@ final class AppState {
         let alert = NSAlert()
         alert.messageText = "Add Remote Folder"
         alert.informativeText = "Agents run in tmux on the remote host (which needs tmux and the agent CLIs installed) and keep running while this Mac is offline."
-        let host = NSTextField(string: "")
-        host.placeholderString = "Host — user@devbox or an ~/.ssh/config alias"
-        let path = NSTextField(string: "")
+        // Plain frames: an NSStackView accessory collapses the fields to zero width.
+        let host = NSTextField(frame: NSRect(x: 0, y: 30, width: 300, height: 24))
+        host.placeholderString = "Host — user@devbox or ~/.ssh/config alias"
+        let path = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
         path.placeholderString = "Absolute path — /home/you/project"
-        let stack = NSStackView(views: [host, path])
-        stack.orientation = .vertical
-        stack.frame = NSRect(x: 0, y: 0, width: 320, height: 52)
-        host.frame.size.width = 320
-        path.frame.size.width = 320
-        alert.accessoryView = stack
+        host.nextKeyView = path
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 54))
+        container.addSubview(host)
+        container.addSubview(path)
+        alert.accessoryView = container
         alert.window.initialFirstResponder = host
         alert.addButton(withTitle: "Add")
         alert.addButton(withTitle: "Cancel")
@@ -562,7 +562,7 @@ final class AppState {
         let cwd = agent.resolvedCwd(folderPath: folder.path)
         if let host = folder.host {
             let launch = RemoteSession.launchCommand(host: host, session: session, cwd: cwd.path, command: preset.command)
-            tmux?.ensureSession(name: session, cwd: FileManager.default.homeDirectoryForCurrentUser, command: launch)
+            tmux?.ensureSession(name: session, cwd: FileManager.default.homeDirectoryForCurrentUser, command: nil, paneCommand: launch)
         } else {
             tmux?.ensureSession(name: session, cwd: cwd, command: preset.command.isEmpty ? nil : preset.command)
         }
@@ -591,7 +591,7 @@ final class AppState {
         if let host = folder.host {
             let restart = RemoteSession.restartCommand(host: host, session: agent.tmuxSession,
                                                        cwd: agent.resolvedCwd(folderPath: folder.path).path, command: command)
-            tmux?.respawn(session: agent.tmuxSession, cwd: FileManager.default.homeDirectoryForCurrentUser, command: restart)
+            tmux?.respawn(session: agent.tmuxSession, cwd: FileManager.default.homeDirectoryForCurrentUser, command: nil, paneCommand: restart)
             return
         }
         tmux?.respawn(session: agent.tmuxSession,

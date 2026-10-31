@@ -59,9 +59,12 @@ final class TmuxController {
     /// the launch command into it. Safe to call for an already-running
     /// session (no-op) so reconciliation on launch can call this freely.
     @discardableResult
-    func ensureSession(name: String, cwd: URL, command: String?) -> Bool {
+    /// `paneCommand` replaces the login shell as the pane's process instead of
+    /// being typed into it (typed text can lose its Enter while a slow shell
+    /// starts up).
+    func ensureSession(name: String, cwd: URL, command: String?, paneCommand: String? = nil) -> Bool {
         if sessionExists(name) { return true }
-        let (status, _) = run(["new-session", "-d", "-s", name, "-c", cwd.path, "-x", "200", "-y", "50"])
+        let (status, _) = run(["new-session", "-d", "-s", name, "-c", cwd.path, "-x", "200", "-y", "50"] + (paneCommand.map { [$0] } ?? []))
         guard status == 0 else { return false }
         if let command, !command.isEmpty {
             sendKeys(to: name, text: command)
@@ -77,8 +80,8 @@ final class TmuxController {
     /// children) and respawns a fresh login shell in `cwd`, then types
     /// `command` into it. Used by "Restart" so e.g. `claude --continue` is
     /// never typed *into* a still-running claude.
-    func respawn(session: String, cwd: URL, command: String?) {
-        run(["respawn-pane", "-k", "-c", cwd.path, "-t", session])
+    func respawn(session: String, cwd: URL, command: String?, paneCommand: String? = nil) {
+        run(["respawn-pane", "-k", "-c", cwd.path, "-t", session] + (paneCommand.map { [$0] } ?? []))
         if let command, !command.isEmpty {
             sendKeys(to: session, text: command)
         }

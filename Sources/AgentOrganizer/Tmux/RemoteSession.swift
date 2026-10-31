@@ -10,8 +10,9 @@ enum RemoteSession {
     /// Remote tmux server name (`tmux -L`), kept apart from the user's own.
     private static let tmux = "tmux -L agent-organizer"
 
-    /// Typed into the local session's login shell. `sh -c` so the reconnect
-    /// loop works whatever the user's local shell is (fish etc.).
+    /// The local pane's command (run by tmux via the user's shell). `sh -c`
+    /// so the reconnect loop works whatever that shell is (fish etc.); a
+    /// login shell takes over afterwards so the tab stays usable.
     static func launchCommand(host: String, session: String, cwd: String, command: String?) -> String {
         var create = "\(tmux) new-session -d -s \(session) -c \(quote(cwd))"
         if let command, !command.isEmpty {
@@ -52,7 +53,11 @@ enum RemoteSession {
     /// ssh exits 255 only on connection errors: retry (`reconnect`, then
     /// attach). A normal exit (remote session ended, user detached) stops.
     private static func wrap(host: String, session: String, firstConnect: String, reconnect: String?) -> String {
-        var attach = "\(tmux) set -g status off; \(tmux) set -g mouse on; exec \(tmux) attach -t \(session)"
+        // Mirrors Resources/tmux.conf: clipboard + passthrough so Claude's own
+        // (OSC 52) copy reaches the Mac; escape-time so Esc isn't delayed.
+        let options = ["status off", "mouse on", "set-clipboard on", "allow-passthrough on", "escape-time 0", "focus-events on"]
+            .map { "set -g \($0)" }.joined(separator: " ';' ")
+        var attach = "\(tmux) \(options); exec \(tmux) attach -t \(session)"
         let first = "\(firstConnect); \(attach)"
         if let reconnect { attach = "\(reconnect); \(attach)" }
         let script = """
@@ -60,7 +65,7 @@ enum RemoteSession {
         while [ $? -eq 255 ]; do echo 'Connection lost, reconnecting in 3s…'; sleep 3; \
         ssh -t \(quote(host)) \(quote(attach)); done
         """
-        return "clear; sh -c \(quote(script))"
+        return "sh -c \(quote(script)); exec \"$SHELL\" -l"
     }
 
     /// POSIX single-quote; the same escape also works in fish.
