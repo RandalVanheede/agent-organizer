@@ -16,7 +16,7 @@ enum RemoteSession {
     static func launchCommand(host: String, session: String, cwd: String, command: String?) -> String {
         var create = "\(tmux) new-session -d -s \(session) -c \(quote(cwd))"
         if let command, !command.isEmpty {
-            create += " && \(tmux) send-keys -t \(session) -- \(quote(command)) Enter"
+            create += " && \(typeWhenReady(session: session, command: command))"
         }
         // Re-running `create` on reconnect is harmless: new-session fails
         // for an existing session, so send-keys is skipped.
@@ -27,9 +27,18 @@ enum RemoteSession {
     static func restartCommand(host: String, session: String, cwd: String, command: String?) -> String {
         var respawn = "\(tmux) respawn-pane -k -c \(quote(cwd)) -t \(session)"
         if let command, !command.isEmpty {
-            respawn += " && \(tmux) send-keys -t \(session) -- \(quote(command)) Enter"
+            respawn += " && \(typeWhenReady(session: session, command: command))"
         }
         return wrap(host: host, session: session, firstConnect: respawn, reconnect: nil)
+    }
+
+    /// Keys typed before the shell's line editor is up can lose their Enter
+    /// (seen locally), so wait until the pane shows anything (the prompt;
+    /// the pane starts / respawns blank), max ~5 s, plus a short grace.
+    /// `sh -c`: the remote login shell running this may be fish.
+    private static func typeWhenReady(session: String, command: String) -> String {
+        let script = "i=0; while [ $i -lt 50 ] && [ -z \"$(\(tmux) capture-pane -p -t \(session) | tr -d '[:space:]')\" ]; do sleep 0.1; i=$((i+1)); done; sleep 0.3; \(tmux) send-keys -t \(session) -- \(quote(command)) Enter"
+        return "sh -c \(quote(script))"
     }
 
     /// Fire-and-forget: killing the local session only drops the ssh link,
