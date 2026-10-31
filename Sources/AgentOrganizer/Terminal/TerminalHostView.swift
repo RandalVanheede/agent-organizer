@@ -11,6 +11,7 @@ struct TerminalHostView: NSViewRepresentable {
     let tmux: TmuxController
     let cache: TerminalCache
     let fontSize: Double
+    var remoteHost: String? = nil
 
     func makeNSView(context: Context) -> TerminalContainerView {
         TerminalContainerView()
@@ -23,6 +24,7 @@ struct TerminalHostView: NSViewRepresentable {
         }
 
         let terminalView = cache.view(for: agent, cwd: cwd, tmux: tmux, fontSize: fontSize)
+        terminalView.remoteHost = remoteHost
         if terminalView.superview !== container {
             container.subviews.forEach { $0.removeFromSuperview() }
             container.addSubview(terminalView)

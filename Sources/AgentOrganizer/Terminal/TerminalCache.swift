@@ -82,8 +82,31 @@ final class TerminalAttachDelegate: LocalProcessTerminalViewDelegate {
 /// `performKeyEquivalent` first, so intercept them there.
 final class AOTerminalView: LocalProcessTerminalView {
     weak var store: Store?
+    /// ssh host when this agent lives in a remote folder (set by the host view).
+    var remoteHost: String?
+
+    /// Remote tabs: the remote tool can't read the Mac clipboard, so copied
+    /// files / images are uploaded and their remote paths pasted instead.
+    override func paste(_ sender: Any) {
+        if !pasteUploadingToRemote() { super.paste(sender) }
+    }
+
+    private func pasteUploadingToRemote() -> Bool {
+        guard let host = remoteHost, let items = RemoteSession.pasteboardUploads(.general) else { return false }
+        RemoteSession.upload(items, to: host) { [weak self] paths in
+            guard let self, !paths.isEmpty else { NSSound.beep(); return }
+            let text = paths.joined(separator: " ") + " "
+            self.send(txt: self.getTerminal().bracketedPasteMode ? "\u{1b}[200~\(text)\u{1b}[201~" : text)
+        }
+        return true
+    }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        // ⌃V is Claude Code's image-paste key; same upload in remote tabs.
+        if event.type == .keyDown, event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .control,
+           event.charactersIgnoringModifiers == "v", pasteUploadingToRemote() {
+            return true
+        }
         guard event.type == .keyDown, let store,
               let bytes = ShortcutAction.terminalActions
                 .first(where: { store.shortcut($0)?.matches(event) == true })?.terminalBytes

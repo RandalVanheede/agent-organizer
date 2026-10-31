@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 
 /// Agents in a remote folder (HBY-13). The agent is still a *local* tmux
 /// session (so status, persistence and the terminal cache work unchanged),
@@ -75,6 +75,79 @@ enum RemoteSession {
         ssh -t \(quote(host)) \(quote(attach)); done
         """
         return "sh -c \(quote(script)); exec \"$SHELL\" -l"
+    }
+
+    /// One thing to upload on paste: a local file, or in-memory PNG data.
+    enum Upload {
+        case file(URL)
+        case png(Data)
+    }
+
+    /// nil when the pasteboard holds nothing worth uploading (plain text paste).
+    /// File URLs win over image data: a Finder copy also carries the icon as TIFF.
+    static func pasteboardUploads(_ pb: NSPasteboard) -> [Upload]? {
+        let urls = (pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? [])
+            .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }
+        if !urls.isEmpty { return urls.map { .file($0) } }
+        if let png = pb.data(forType: .png) { return [.png(png)] }
+        if let tiff = pb.data(forType: .tiff), let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+            return [.png(png)]
+        }
+        return nil
+    }
+
+    /// Streams each item over `ssh host 'cat > path'` (no scp/sftp needed) and
+    /// calls back on the main thread with the remote paths that made it.
+    static func upload(_ items: [Upload], to host: String, completion: @escaping @MainActor ([String]) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            var paths: [String] = []
+            for item in items {
+                let tag = UUID().uuidString.prefix(8).lowercased()
+                let name: String
+                let input: FileHandle?
+                let temp: URL?
+                switch item {
+                case .file(let url):
+                    // Spaces etc. would need quoting in the prompt; keep it a bare word.
+                    let safe = url.lastPathComponent.map { $0.isLetter || $0.isNumber || ".-_".contains($0) ? $0 : "_" }
+                    name = "\(tag)-\(String(safe))"
+                    input = try? FileHandle(forReadingFrom: url)
+                    temp = nil
+                case .png(let data):
+                    name = "\(tag).png"
+                    let url = FileManager.default.temporaryDirectory.appendingPathComponent(name)
+                    try? data.write(to: url)
+                    input = try? FileHandle(forReadingFrom: url)
+                    temp = url
+                }
+                defer { if let temp { try? FileManager.default.removeItem(at: temp) } }
+                guard let input else { continue }
+                // Private per-user dir (not shared /tmp); the remote echoes the
+                // absolute path back since its $HOME isn't known here.
+                let script = "umask 077; d=\"$HOME/.cache/agent-organizer-paste\"; mkdir -p \"$d\" && chmod 700 \"$d\" && cat > \"$d/\(name)\" && echo \"$d/\(name)\""
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+                process.arguments = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", host,
+                                     "sh -c \(quote(script))"]
+                process.standardInput = input
+                let out = Pipe()
+                process.standardOutput = out
+                process.standardError = FileHandle.nullDevice
+                do {
+                    try process.run()
+                    process.waitUntilExit() // background queue, not the main run loop
+                } catch {}
+                try? input.close()
+                let remote = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                if process.terminationStatus == 0, remote.hasPrefix("/") {
+                    paths.append(remote)
+                } else {
+                    HookLog.write("paste upload to \(host) failed (status \(process.terminationStatus))")
+                }
+            }
+            DispatchQueue.main.async { completion(paths) }
+        }
     }
 
     /// POSIX single-quote; the same escape also works in fish.

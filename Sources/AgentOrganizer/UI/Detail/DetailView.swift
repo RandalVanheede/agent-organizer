@@ -44,7 +44,8 @@ private struct AgentPane: View {
             cwd: agent.resolvedCwd(folderPath: folder.path),
             tmux: tmux,
             cache: appState.cache,
-            fontSize: appState.store.terminalFontSize
+            fontSize: appState.store.terminalFontSize,
+            remoteHost: folder.host
         )
         .id(agent.id)
     }
