@@ -22,6 +22,7 @@ final class TerminalCache {
         }
 
         let view = AOTerminalView(frame: .zero)
+        view.sessionName = agent.tmuxSession
         view.store = store
         view.font = .monospacedSystemFont(ofSize: fontSize, weight: .regular)
         let delegate = TerminalAttachDelegate()
@@ -82,8 +83,19 @@ final class TerminalAttachDelegate: LocalProcessTerminalViewDelegate {
 /// `performKeyEquivalent` first, so intercept them there.
 final class AOTerminalView: LocalProcessTerminalView {
     weak var store: Store?
+    /// The agent's tmux session (set at creation); keys the opener token.
+    var sessionName: String?
     /// ssh host when this agent lives in a remote folder (set by the host view).
-    var remoteHost: String?
+    var remoteHost: String? {
+        didSet {
+            guard remoteHost != nil, oldValue == nil else { return }
+            getTerminal().registerOscHandler(code: RemoteSession.openerOSC) { [weak self] payload in
+                guard let host = self?.remoteHost, let session = self?.sessionName else { return }
+                let bytes = ArraySlice(Array(payload))
+                DispatchQueue.main.async { RemoteSession.handleOpenRequest(bytes, host: host, session: session) }
+            }
+        }
+    }
 
     /// Remote tabs: the remote tool can't read the Mac clipboard, so copied
     /// files / images are uploaded and their remote paths pasted instead.
