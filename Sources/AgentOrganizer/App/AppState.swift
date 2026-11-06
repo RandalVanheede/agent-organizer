@@ -50,6 +50,9 @@ final class AppState {
     /// tmux session name -> latest live pane title (from control mode window
     /// renames), overridden by a user-set `Agent.title` when present.
     var liveTitles: [String: String] = [:]
+    /// session name -> tool-set pane title (observable mirror of the
+    /// control client's snapshot, so tabs redraw when it changes).
+    var paneTitles: [String: String] = [:]
     var orphanSessions: [OrphanSession] = []
     /// Agents a Claude Code hook flagged as needing the user (Notification /
     /// Stop). Cleared when the tab is viewed. Drives the dock badge.
@@ -70,6 +73,11 @@ final class AppState {
     /// Agents with a hook event in the last few seconds — hooks are the
     /// authoritative signal, so the activity heuristic stays quiet for them.
     private var lastHookAt: [Agent.ID: TimeInterval] = [:]
+    /// Claude Code sub-agents still working per agent (SubagentStart/Stop
+    /// hooks). Non-empty = busy even when the main turn has stopped.
+    /// shortcut: a sub-agent killed without SubagentStop stays counted until
+    /// the tool exits/restarts; add a timeout if that shows up in practice.
+    private var activeSubagents: [Agent.ID: Set<String>] = [:]
 
     init() {
         cache.store = store
@@ -80,6 +88,7 @@ final class AppState {
         watcher.onChange = { [weak self] id in self?.handleFolderChanged(id) }
         hookWatcher.onEvent = { [weak self] event in self?.handleHookEvent(event) }
         hookWatcher.start()
+        HookInstaller.upgradeIfNeeded()
         restoreUISelection()
     }
 
@@ -91,12 +100,23 @@ final class AppState {
             HookLog.write("event \(event.name) pane=\(event.pane) -> no agent (session=\(session ?? "nil"))")
             return
         }
-        HookLog.write("event \(event.name) pane=\(event.pane) -> \(session)")
+        HookLog.write("event \(event.name) pane=\(event.pane) -> \(session) sub=\(event.subagentID ?? "-") active=\(activeSubagents[agent.id]?.count ?? 0)")
         lastHookAt[agent.id] = Date().timeIntervalSince1970
 
         switch event.name {
         case "UserPromptSubmit":
             clearAttention(agent.id)
+        case "SubagentStart", "SubagentStop":
+            guard let id = event.subagentID else { break }
+            if event.name == "SubagentStart" {
+                activeSubagents[agent.id, default: []].insert(id)
+            } else {
+                activeSubagents[agent.id]?.remove(id)
+            }
+            recomputeStatuses()
+        case "Stop" where !(activeSubagents[agent.id]?.isEmpty ?? true):
+            // Main turn ended but background sub-agents still work: not done.
+            break
         case "Notification", "Stop":
             // The user is actively watching this exact tab: no sound, no
             // toast/notification, no dot. Anything else - other tab, other
@@ -240,7 +260,10 @@ final class AppState {
             self?.liveTitles[sessionName] = title
         }
         controlClient.onPanesChanged = { [weak self] in
-            self?.recomputeStatuses()
+            guard let self else { return }
+            let titles = controlClient.panes.filter { !Self.shellCommands.contains($0.value.command) }.mapValues(\.title)
+            if titles != paneTitles { paneTitles = titles }
+            recomputeStatuses()
         }
     }
 
@@ -288,7 +311,7 @@ final class AppState {
                     new = .idle
                 } else if attention.contains(agent.id) {
                     new = .waiting
-                } else if now - pane.activity <= Self.runningWindow {
+                } else if !(activeSubagents[agent.id]?.isEmpty ?? true) || now - pane.activity <= Self.runningWindow {
                     new = .running
                 } else {
                     new = .waiting
@@ -327,6 +350,8 @@ final class AppState {
             default:
                 quietSince.removeValue(forKey: agent.id)
                 dingedThisEpisode.remove(agent.id)
+                // Tool gone (back to shell / session dead): its sub-agents too.
+                if new == .idle || new == .exited { activeSubagents.removeValue(forKey: agent.id) }
             }
         }
         _ = changed
@@ -363,8 +388,20 @@ final class AppState {
         controlClient.sessionName(forPaneID: paneID)
     }
 
+    /// The tool's own pane title (Claude Code sets a topic summary, e.g.
+    /// "✳ Fix login bug") wins over the window name, which is just the
+    /// process name. Shell panes are skipped: zsh titles are "user@host:~".
     func liveTitle(for agent: Agent) -> String? {
-        liveTitles[agent.tmuxSession]
+        if let paneTitle = paneTitles[agent.tmuxSession], !paneTitle.isEmpty {
+            var title = Substring(paneTitle)
+            // Drop Claude's status glyph (✳ idle / braille spinner) prefix.
+            if let first = title.first, !first.isLetter, !first.isNumber,
+               title.dropFirst().first == " " {
+                title = title.dropFirst(2)
+            }
+            if !title.isEmpty { return String(title) }
+        }
+        return liveTitles[agent.tmuxSession]
     }
 
     func resourceUsage(for agent: Agent) -> ResourceUsage? {

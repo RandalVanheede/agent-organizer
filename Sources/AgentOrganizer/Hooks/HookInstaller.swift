@@ -6,7 +6,9 @@ import Foundation
 /// into `~/.claude/settings.json`. Existing hooks are left untouched; a
 /// one-time backup of settings.json is written next to it.
 enum HookInstaller {
-    static let events = ["Notification", "Stop", "UserPromptSubmit"]
+    /// SubagentStart/Stop keep an agent "running" while background sub-agents
+    /// work after the main turn has stopped.
+    static let events = ["Notification", "Stop", "UserPromptSubmit", "SubagentStart", "SubagentStop"]
 
     static var scriptURL: URL {
         Store.appSupportDirectory().appendingPathComponent("bin/ao-hook", isDirectory: false)
@@ -34,6 +36,16 @@ enum HookInstaller {
         return events.allSatisfy { event in
             (hooks[event] as? [[String: Any]])?.contains(where: groupIsOurs) ?? false
         }
+    }
+
+    /// Adds events introduced after an earlier install (no-op when the user
+    /// never installed, or everything is already there).
+    static func upgradeIfNeeded() {
+        guard let hooks = try? readHooks(), !isInstalled(),
+              events.contains(where: { (hooks[$0] as? [[String: Any]])?.contains(where: groupIsOurs) ?? false })
+        else { return }
+        try? install()
+        HookLog.write("hooks upgraded to \(events)")
     }
 
     static func install() throws {

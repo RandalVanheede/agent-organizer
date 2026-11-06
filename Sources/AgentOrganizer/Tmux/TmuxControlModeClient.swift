@@ -6,6 +6,7 @@ struct PaneSnapshot: Equatable {
     let paneID: String          // "%12" — what `TMUX_PANE` is inside the pane
     let command: String         // `#{pane_current_command}`, e.g. "zsh", "node"
     let activity: TimeInterval  // `#{window_activity}`, unix seconds
+    let title: String           // `#{pane_title}` (OSC 0/2), "" when still tmux's default (host name)
 }
 
 /// One long-lived `tmux -C` client attached to a hidden session on this
@@ -90,8 +91,12 @@ final class TmuxControlModeClient {
     }
 
     private func subscribe() {
-        // One string for all sessions: name|paneID|command|activity;...
-        let format = "#{S:#{session_name}|#{pane_id}|#{pane_current_command}|#{window_activity};}"
+        // One string for all sessions: name|paneID|command|activity|title;...
+        // Title last (may contain '|'). A ';' in it just truncates the title
+        // (the leftover fragment fails the field-count check); `s/;/…/` can't
+        // be used, ';' separates format modifiers.
+        let title = "#{?#{==:#{pane_title},#{host}},,#{pane_title}}"
+        let format = "#{S:#{session_name}|#{pane_id}|#{pane_current_command}|#{window_activity}|\(title);}"
         send("refresh-client -B \(Self.subscriptionName)::\"\(format)\"")
     }
 
@@ -142,11 +147,11 @@ final class TmuxControlModeClient {
     private func parseSubscription(_ payload: String) {
         var next: [String: PaneSnapshot] = [:]
         for entry in payload.split(separator: ";") {
-            let f = entry.split(separator: "|", omittingEmptySubsequences: false)
-            guard f.count == 4, let activity = TimeInterval(f[3]) else { continue }
+            let f = entry.split(separator: "|", maxSplits: 4, omittingEmptySubsequences: false)
+            guard f.count == 5, let activity = TimeInterval(f[3]) else { continue }
             let session = String(f[0])
             guard session != Self.hiddenSessionName else { continue }
-            next[session] = PaneSnapshot(paneID: String(f[1]), command: String(f[2]), activity: activity)
+            next[session] = PaneSnapshot(paneID: String(f[1]), command: String(f[2]), activity: activity, title: String(f[4]))
         }
         if next != panes {
             panes = next

@@ -10,6 +10,7 @@ final class HookEventWatcher {
         let name: String        // "Notification" | "Stop" | "UserPromptSubmit" | ...
         let message: String?    // Notification's human-readable text, if any
         let cwd: String?
+        let subagentID: String? // SubagentStart/Stop's `agent_id`
     }
 
     static var eventsDirectory: URL {
@@ -59,7 +60,8 @@ final class HookEventWatcher {
                 pane: pane,
                 name: name,
                 message: payload?["message"] as? String,
-                cwd: payload?["cwd"] as? String
+                cwd: payload?["cwd"] as? String,
+                subagentID: payload?["agent_id"] as? String
             ))
         }
     }
