@@ -146,13 +146,20 @@ final class TmuxControlModeClient {
 
     private func parseSubscription(_ payload: String) {
         var next: [String: PaneSnapshot] = [:]
+        var seenSessions: [String: Int] = [:], seenPanes: [String: Int] = [:]
         for entry in payload.split(separator: ";") {
             let f = entry.split(separator: "|", maxSplits: 4, omittingEmptySubsequences: false)
             guard f.count == 5, let activity = TimeInterval(f[3]) else { continue }
             let session = String(f[0])
+            seenSessions[session, default: 0] += 1
+            seenPanes[String(f[1]), default: 0] += 1
             guard session != Self.hiddenSessionName else { continue }
             next[session] = PaneSnapshot(paneID: String(f[1]), command: String(f[2]), activity: activity, title: String(f[4]))
         }
+        // Titles are pane-controlled (OSC 2) and can't be escaped here, so a
+        // title like "x;ao_other|%5|zsh|0|" forges entries. tmux lists each
+        // session and pane once: drop anything that shows up twice.
+        next = next.filter { seenSessions[$0.key] == 1 && seenPanes[$0.value.paneID] == 1 }
         if next != panes {
             panes = next
             onPanesChanged?()
