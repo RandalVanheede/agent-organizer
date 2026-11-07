@@ -19,6 +19,9 @@ final class Store {
     var attentionSound: String = "Glass"
     /// Sidebar filter: hide folders that have no agents (= no live tmux session).
     var sidebarOpenAgentsOnly: Bool = false
+    /// tmux sessions of Claude agents mid-turn (between UserPromptSubmit and
+    /// Stop), so status stays right across an app restart.
+    var activeTurnSessions: Set<String> = []
     /// User-changed shortcuts keyed by `ShortcutAction.rawValue`; absent = default.
     var shortcutOverrides: [String: KeyCombo] = [:]
 
@@ -46,6 +49,7 @@ final class Store {
         var activeAgentByFolder: [String: String]?
         var attentionSound: String?
         var sidebarOpenAgentsOnly: Bool?
+        var activeTurnSessions: [String]?
         var shortcutOverrides: [String: KeyCombo]?
     }
 
@@ -62,6 +66,7 @@ final class Store {
         activeAgentByFolder = state.activeAgentByFolder ?? [:]
         attentionSound = state.attentionSound ?? "Glass"
         sidebarOpenAgentsOnly = state.sidebarOpenAgentsOnly ?? false
+        activeTurnSessions = Set(state.activeTurnSessions ?? [])
         shortcutOverrides = state.shortcutOverrides ?? [:]
     }
 
@@ -76,6 +81,7 @@ final class Store {
             activeAgentByFolder: activeAgentByFolder,
             attentionSound: attentionSound,
             sidebarOpenAgentsOnly: sidebarOpenAgentsOnly,
+            activeTurnSessions: activeTurnSessions.sorted(),
             shortcutOverrides: shortcutOverrides
         )
         guard let data = try? JSONEncoder().encode(state) else { return }
@@ -241,6 +247,12 @@ final class Store {
 
     func setAttentionSound(_ name: String) {
         attentionSound = name
+        save()
+    }
+
+    func setActiveTurnSessions(_ sessions: Set<String>) {
+        guard sessions != activeTurnSessions else { return }
+        activeTurnSessions = sessions
         save()
     }
 

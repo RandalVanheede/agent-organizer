@@ -211,8 +211,8 @@ Preferences › Shortcuts rebinds every app command (Add Folder, New Agent/Shell
 "Add Remote Folder…" (File menu / hold the sidebar + button) takes an ssh host (`user@host` or `~/.ssh/config` alias) + absolute remote path; stored as `Folder.host`. A remote agent is still a local tmux session, but it runs `sh -c 'ssh -t host …'` attached to a same-named session on the remote's `tmux -L agent-organizer` server (`RemoteSession`), so the tool survives the Mac sleeping; ssh exit 255 → reconnect loop. Kill also kills the remote session (one-shot ssh, BatchMode). Not covered: folder scanning/branches, Claude hooks (attention comes from the quiet-after-running heuristic), live titles, orphan detection on the remote; remote panes never show "idle".
 
 ### Attention & navigation pass
-- **Needs you** sidebar section: tool agents in `waiting` across all folders, oldest first (`AppState.waitingSince`), shell presets excluded. ⌘J (`nextWaitingAgent`) cycles through them.
-- **Status shapes**: running = dot, waiting = dot + halo, idle = hollow ring, exited = ×, unknown = dashed ring — readable without colour. Running tabs get a sliding 2 pt line (static under Reduce Motion), the app's only ambient animation.
+- **Needs you vs Finished**: `waiting` now means blocked on the user (permission prompt / question); a quiet tool whose turn ended is `done` (teal ✓). Sidebar sections "Needs you" (until answered) and "Finished" (until viewed), oldest first. ⌘J (`nextWaitingAgent`, "Next Agent to Check") cycles needs-you then finished.
+- **Status shapes**: running = dot, waiting = dot + halo, idle = hollow ring, exited = ×, unknown = dashed ring — readable without colour. Running tabs get a static 2 pt green line (a sliding segment was tried and found distracting).
 - **Tab subtitle** shows path/branch only; CPU/memory moved to the tooltip and appear on the tab (orange) only when ≥ 50 % CPU or ≥ 1 GB.
 - **Undoable kill** (8 s toast) and a **Session ended** card (Restart / Close Tab) for dead panes.
 - **Filter** ("folders with agents only") is a toggle in the Folders section header; the selected folder always stays listed.

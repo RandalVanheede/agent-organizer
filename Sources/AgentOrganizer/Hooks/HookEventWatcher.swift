@@ -9,6 +9,7 @@ final class HookEventWatcher {
         let pane: String        // TMUX_PANE inside the agent's pane, e.g. "%7"
         let name: String        // "Notification" | "Stop" | "UserPromptSubmit" | ...
         let message: String?    // Notification's human-readable text, if any
+        let notificationType: String? // Notification's kind: permission_prompt, idle_prompt, …
         let cwd: String?
         let subagentID: String? // SubagentStart/Stop's `agent_id`
     }
@@ -60,6 +61,7 @@ final class HookEventWatcher {
                 pane: pane,
                 name: name,
                 message: payload?["message"] as? String,
+                notificationType: payload?["notification_type"] as? String,
                 cwd: payload?["cwd"] as? String,
                 subagentID: payload?["agent_id"] as? String
             ))

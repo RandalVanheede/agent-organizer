@@ -53,7 +53,7 @@ struct AppCommands: Commands {
         CommandMenu("Agent") {
             Button("Quick Open…") { appState.quickOpenPresented = true }
                 .keyboardShortcut(appState.store.shortcut(.quickOpen)?.keyboardShortcut)
-            Button("Next Waiting Agent") { appState.selectNextWaitingAgent() }
+            Button("Next Agent to Check") { appState.selectNextAgentToCheck() }
                 .keyboardShortcut(appState.store.shortcut(.nextWaitingAgent)?.keyboardShortcut)
 
             Divider()

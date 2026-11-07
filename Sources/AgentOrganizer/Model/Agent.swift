@@ -5,9 +5,11 @@ import Foundation
 enum AgentStatus: Equatable {
     /// Tool is producing output (activity within the last couple of seconds).
     case running
-    /// Tool is up but quiet — most likely waiting for the user. Also forced
-    /// by a Claude Code `Notification`/`Stop` hook until the tab is viewed.
+    /// Blocked on the user: a permission prompt or question (Claude Code
+    /// `Notification` hook). Holds until answered, not merely viewed.
     case waiting
+    /// Tool is up and quiet: its turn ended, ready for the next prompt.
+    case done
     /// Nothing but the login shell is running in the pane.
     case idle
     /// The tmux session is gone.

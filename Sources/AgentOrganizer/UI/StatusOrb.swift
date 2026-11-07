@@ -6,6 +6,7 @@ extension AgentStatus {
         switch self {
         case .running: return .green
         case .waiting: return .orange
+        case .done: return .teal
         case .idle: return .gray
         case .exited: return .red
         case .unknown: return .gray.opacity(0.5)
@@ -15,7 +16,8 @@ extension AgentStatus {
     var label: String {
         switch self {
         case .running: return "Running"
-        case .waiting: return "Waiting for input"
+        case .waiting: return "Needs your input"
+        case .done: return "Finished"
         case .idle: return "Idle shell"
         case .exited: return "Session exited"
         case .unknown: return "Status unknown"
@@ -24,8 +26,8 @@ extension AgentStatus {
 }
 
 /// Status as colour *and* shape, so it reads without colour vision:
-/// running = solid dot, waiting = dot with a halo, idle = hollow ring,
-/// exited = ×, unknown = dashed ring.
+/// running = solid dot, needs you = dot with a halo, finished = ✓,
+/// idle = hollow ring, exited = ×, unknown = dashed ring.
 struct StatusOrb: View {
     let status: AgentStatus
     var size: CGFloat = 7
@@ -45,6 +47,10 @@ struct StatusOrb: View {
         case .waiting:
             Circle().fill(status.color)
                 .overlay { Circle().stroke(status.color.opacity(0.5), lineWidth: 2).frame(width: size + 4, height: size + 4) }
+        case .done:
+            Image(systemName: "checkmark")
+                .font(.system(size: size + 1, weight: .heavy))
+                .foregroundStyle(status.color)
         case .idle:
             Circle().strokeBorder(status.color, lineWidth: 1.5)
         case .exited:

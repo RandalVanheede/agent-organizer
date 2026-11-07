@@ -56,10 +56,13 @@ final class AppState {
     var orphanSessions: [OrphanSession] = []
     /// Agents a Claude Code hook flagged as needing the user (Notification /
     /// Stop). Cleared when the tab is viewed. Drives the dock badge.
-    var attention: Set<Agent.ID> = []
-    /// When each agent last entered `waiting` (unix seconds): orders the
-    /// sidebar's "Needs you" list oldest first.
-    var waitingSince: [Agent.ID: TimeInterval] = [:]
+    var attention: [Agent.ID: Attention] = [:]
+    struct Attention {
+        enum Kind { case needsInput, finished }
+        let kind: Kind
+        /// Unix seconds; orders the sidebar lists oldest first.
+        let since: TimeInterval
+    }
     /// Quick Open (⌘P) sheet.
     var quickOpenPresented = false
     /// Killed agents still inside their undo window: record gone from the
@@ -80,8 +83,34 @@ final class AppState {
     private var recomputeTimer: Timer?
     /// Shells: a pane running only one of these is "idle".
     private static let shellCommands: Set<String> = ["zsh", "bash", "fish", "sh", "dash", "tcsh", "ksh", "nu", "login", "-zsh", "-bash"]
-    /// Output within this window counts as "running".
+    /// Output this long after a prompt appeared means it was answered.
+    private static let answeredAfter: TimeInterval = 3
+    /// Output within this window makes a hook-less tool "running"…
     private static let runningWindow: TimeInterval = 2.5
+    /// …and it stays running until quiet this long (no flicker between bursts).
+    private static let runningHold: TimeInterval = 6
+    /// A hook-reported turn with no output for this long was most likely
+    /// interrupted (Esc fires no `Stop`); Claude's spinner redraws while working.
+    private static let stalledTurnAfter: TimeInterval = 15
+    /// Agents whose Claude hooks have reported in this run. Together with
+    /// any pane running Claude while hooks are installed, their running/done
+    /// comes from turn boundaries, not from screen output (a click or a
+    /// tab-switch redraw must not read as "working").
+    private var hookAware: Set<Agent.ID> = []
+    @ObservationIgnored private var hooksInstalled = HookInstaller.isInstalled()
+    /// Hook-driven agents between `UserPromptSubmit` and `Stop`; persisted.
+    @ObservationIgnored private var turnActive: Set<Agent.ID> = [] {
+        didSet {
+            let sessions = Set(store.agents.filter { turnActive.contains($0.id) }.map(\.tmuxSession))
+            store.setActiveTurnSessions(sessions)
+        }
+    }
+
+    /// Claude Code shows up in tmux as its version, e.g. "2.1.319".
+    private static func isClaudeCommand(_ command: String) -> Bool {
+        let parts = command.split(separator: ".", omittingEmptySubsequences: false)
+        return parts.count >= 3 && parts.allSatisfy { !$0.isEmpty && $0.allSatisfy(\.isNumber) }
+    }
     /// A tool that was running and has been quiet this long is assumed to be
     /// waiting for the user (used for tools without hooks, e.g. OpenCode).
     private static let quietBeforeDing: TimeInterval = 4.0
@@ -109,6 +138,7 @@ final class AppState {
         wireControlClient()
         for folder in store.folders { watcher.watch(folder) }
         watcher.onChange = { [weak self] id in self?.handleFolderChanged(id) }
+        turnActive = Set(store.agents.filter { store.activeTurnSessions.contains($0.tmuxSession) }.map(\.id))
         hookWatcher.onEvent = { [weak self] event in self?.handleHookEvent(event) }
         hookWatcher.start()
         HookInstaller.upgradeIfNeeded()
@@ -125,10 +155,14 @@ final class AppState {
         }
         HookLog.write("event \(event.name) pane=\(event.pane) -> \(session) sub=\(event.subagentID ?? "-") active=\(activeSubagents[agent.id]?.count ?? 0)")
         lastHookAt[agent.id] = Date().timeIntervalSince1970
+        hookAware.insert(agent.id)
+        hooksInstalled = true
 
         switch event.name {
         case "UserPromptSubmit":
+            turnActive.insert(agent.id)
             clearAttention(agent.id)
+            recomputeStatuses()
         case "SubagentStart", "SubagentStop":
             guard let id = event.subagentID else { break }
             if event.name == "SubagentStart" {
@@ -141,18 +175,34 @@ final class AppState {
             // Main turn ended but background sub-agents still work: not done.
             break
         case "Notification", "Stop":
-            // The user is actively watching this exact tab: no sound, no
-            // toast/notification, no dot. Anything else - other tab, other
-            // app, app hidden/minimized - gets the full treatment.
-            guard !isBeingWatched(agent.id) else { break }
-            flagAttention(agent.id)
+            let kind: Attention.Kind
+            if event.name == "Stop" {
+                turnActive.remove(agent.id)
+                kind = .finished
+            } else {
+                switch Self.notificationKind(type: event.notificationType, message: event.message) {
+                case .ignore: return
+                // Claude's "waiting for your input" nudge after a minute idle:
+                // the turn already finished, so only flag it if nothing is yet.
+                case .idleReminder:
+                    guard attention[agent.id] == nil else { return }
+                    kind = .finished
+                case .blocked: kind = .needsInput
+                }
+            }
+            let watched = isBeingWatched(agent.id)
+            // Watching the tab: a finished turn is already seen, but a prompt
+            // still blocks until answered, so it's recorded quietly.
+            if watched && kind == .finished { break }
+            flagAttention(agent.id, kind)
+            guard !watched else { break }
             playAttentionSound()
             let folderName = store.folder(agent.folderID)?.displayName ?? ""
             let title = displayTitle(for: agent)
             postNotification(
                 agentID: agent.id,
                 title: folderName.isEmpty ? title : "\(title) — \(folderName)",
-                body: event.message ?? (event.name == "Stop" ? "Finished — waiting for your next prompt." : "Needs your input.")
+                body: kind == .finished ? "Finished. Ready for your next prompt." : (event.message ?? "Needs your input.")
             )
         default:
             break
@@ -234,7 +284,8 @@ final class AppState {
         selectedFolderID = agent.folderID
         activeAgentByFolder[agent.folderID] = agent.id
         if splitAgentID == agent.id { splitAgentID = nil }
-        clearAttention(agent.id)
+        // Seeing a finished turn settles it; a pending prompt needs an answer.
+        if attention[agent.id]?.kind == .finished { clearAttention(agent.id) }
         persistUISelection()
     }
 
@@ -265,20 +316,24 @@ final class AppState {
         return store.sortedFolders().filter { withAgents.contains($0.id) || $0.id == selectedFolderID }
     }
 
-    /// Tool agents waiting for the user, across all folders, oldest first.
-    /// Shell presets are left out: a quiet shell isn't asking for anything.
-    var waitingAgents: [Agent] {
+    /// Agents blocked on you (permission prompt / question), oldest first.
+    var needsYouAgents: [Agent] { agents(flagged: .needsInput) }
+    /// Agents whose turn finished and that you haven't looked at yet.
+    var finishedAgents: [Agent] { agents(flagged: .finished) }
+
+    private func agents(flagged kind: Attention.Kind) -> [Agent] {
         store.agents
-            .filter { agentStatuses[$0.id] == .waiting && !store.preset(for: $0.presetID).command.isEmpty }
-            .sorted { (waitingSince[$0.id] ?? 0) < (waitingSince[$1.id] ?? 0) }
+            .compactMap { agent in attention[agent.id].flatMap { $0.kind == kind ? (agent, $0.since) : nil } }
+            .sorted { $0.1 < $1.1 }
+            .map(\.0)
     }
 
-    /// ⌘J — cycle through `waitingAgents`, starting with the oldest.
-    func selectNextWaitingAgent() {
-        let waiting = waitingAgents
-        guard !waiting.isEmpty else { NSSound.beep(); return }
-        let idx = selectedAgent.flatMap { current in waiting.firstIndex { $0.id == current.id } }
-        selectAgent(waiting[idx.map { ($0 + 1) % waiting.count } ?? 0])
+    /// ⌘J — cycle through agents needing you, then unseen finished ones.
+    func selectNextAgentToCheck() {
+        let queue = needsYouAgents + finishedAgents
+        guard !queue.isEmpty else { NSSound.beep(); return }
+        let idx = selectedAgent.flatMap { current in queue.firstIndex { $0.id == current.id } }
+        selectAgent(queue[idx.map { ($0 + 1) % queue.count } ?? 0])
     }
 
     /// User-set name, else the tool's live title, else the preset name.
@@ -379,9 +434,9 @@ final class AppState {
         }
     }
 
-    /// Three-way status from the control-mode pane snapshot:
-    /// exited (session gone) / idle (only a shell) / running (recent output)
-    /// / waiting (tool up but quiet, or a hook said it needs you).
+    /// Status from the control-mode pane snapshot: exited (session gone) /
+    /// idle (only a shell) / waiting (a hook says it's blocked on you) /
+    /// running (recent output) / done (tool up and quiet).
     func recomputeStatuses() {
         let now = Date().timeIntervalSince1970
         var changed = false
@@ -395,12 +450,25 @@ final class AppState {
                 // "only a shell" can't be told apart there: never idle.
                 if Self.shellCommands.contains(pane.command) && !remoteFolders.contains(agent.folderID) {
                     new = .idle
-                } else if attention.contains(agent.id) {
+                } else if let flag = attention[agent.id], flag.kind == .needsInput,
+                          pane.activity <= flag.since + Self.answeredAfter {
                     new = .waiting
-                } else if !(activeSubagents[agent.id]?.isEmpty ?? true) || now - pane.activity <= Self.runningWindow {
+                } else if !(activeSubagents[agent.id]?.isEmpty ?? true) {
                     new = .running
+                } else if hookAware.contains(agent.id) || (hooksInstalled && Self.isClaudeCommand(pane.command)) {
+                    // Turn boundaries from hooks: typing or a redraw on tab
+                    // switch doesn't count as working, a pause mid-turn does.
+                    let working = turnActive.contains(agent.id) && now - pane.activity <= Self.stalledTurnAfter
+                    new = working ? .running : .done
                 } else {
-                    new = .waiting
+                    let quiet = now - pane.activity
+                    let wasRunning = agentStatuses[agent.id] == .running
+                    new = quiet <= Self.runningWindow || (wasRunning && quiet <= Self.runningHold) ? .running : .done
+                }
+                // Output well after the prompt appeared = it was answered.
+                if let flag = attention[agent.id], flag.kind == .needsInput, new != .waiting {
+                    attention.removeValue(forKey: agent.id)
+                    updateDockBadge()
                 }
             } else if liveSessions.contains(agent.tmuxSession) {
                 new = .unknown
@@ -411,7 +479,6 @@ final class AppState {
             if old != new {
                 agentStatuses[agent.id] = new
                 changed = true
-                if new == .waiting { waitingSince[agent.id] = now } else { waitingSince.removeValue(forKey: agent.id) }
             }
             // Quiet-after-running heuristic (for persistent tools without
             // hooks, e.g. OpenCode). Plain shells go quiet between commands
@@ -421,7 +488,7 @@ final class AppState {
             case .running:
                 quietSince.removeValue(forKey: agent.id)
                 dingedThisEpisode.remove(agent.id)
-            case .waiting:
+            case .done:
                 if old == .running { quietSince[agent.id] = now }
                 if isToolAgent,
                    let since = quietSince[agent.id],
@@ -430,15 +497,19 @@ final class AppState {
                    now - (lastHookAt[agent.id] ?? 0) > 10,
                    !isBeingWatched(agent.id) {
                     dingedThisEpisode.insert(agent.id)
-                    flagAttention(agent.id)
+                    flagAttention(agent.id, .finished)
                     playAttentionSound()
                     HookLog.write("quiet-after-running -> attention for \(agent.tmuxSession)")
                 }
             default:
                 quietSince.removeValue(forKey: agent.id)
                 dingedThisEpisode.remove(agent.id)
-                // Tool gone (back to shell / session dead): its sub-agents too.
-                if new == .idle || new == .exited { activeSubagents.removeValue(forKey: agent.id) }
+                // Tool gone (back to shell / session dead): its sub-agents and flags too.
+                if new == .idle || new == .exited {
+                    activeSubagents.removeValue(forKey: agent.id)
+                    turnActive.remove(agent.id)
+                    if attention.removeValue(forKey: agent.id) != nil { updateDockBadge() }
+                }
             }
         }
         _ = changed
@@ -455,14 +526,16 @@ final class AppState {
 
     // MARK: Attention (hooks) & dock badge
 
-    func flagAttention(_ agentID: Agent.ID) {
-        attention.insert(agentID)
+    func flagAttention(_ agentID: Agent.ID, _ kind: Attention.Kind) {
+        // A pending prompt outranks a finished turn.
+        if attention[agentID]?.kind == .needsInput && kind == .finished { return }
+        attention[agentID] = Attention(kind: kind, since: Date().timeIntervalSince1970)
         recomputeStatuses()
         updateDockBadge()
     }
 
     func clearAttention(_ agentID: Agent.ID) {
-        guard attention.remove(agentID) != nil else { return }
+        guard attention.removeValue(forKey: agentID) != nil else { return }
         recomputeStatuses()
         updateDockBadge()
     }
@@ -809,7 +882,7 @@ final class AppState {
     }
 
     func folderNeedsAttention(_ folderID: Folder.ID) -> Bool {
-        store.agents(in: folderID).contains { attention.contains($0.id) }
+        store.agents(in: folderID).contains { attention[$0.id] != nil }
     }
 
     /// One orb for the whole folder, same palette as the tabs. Most
@@ -820,6 +893,7 @@ final class AppState {
         if statuses.contains(.exited) { return .exited }
         if statuses.contains(.waiting) { return .waiting }
         if statuses.contains(.running) { return .running }
+        if statuses.contains(.done) { return .done }
         if statuses.contains(.idle) { return .idle }
         return .unknown
     }
@@ -827,6 +901,20 @@ final class AppState {
     func setTerminalFontSize(_ size: Double) {
         store.setTerminalFontSize(size)
         cache.applyFontSize(store.terminalFontSize)
+    }
+
+    enum NotificationKind { case blocked, idleReminder, ignore }
+
+    /// Claude Code's Notification hook covers several things; only some
+    /// mean it's blocked. `notification_type` when present, else the text.
+    static func notificationKind(type: String?, message: String?) -> NotificationKind {
+        switch type {
+        case "idle_prompt": return .idleReminder
+        case "auth_success": return .ignore
+        case .some: return .blocked // permission_prompt, elicitation_dialog, future kinds
+        case nil:
+            return (message ?? "").localizedCaseInsensitiveContains("waiting for your input") ? .idleReminder : .blocked
+        }
     }
 
     private static func slug(_ text: String) -> String {

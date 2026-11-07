@@ -145,7 +145,7 @@ private struct AgentCensus: View {
     @Environment(AppState.self) private var appState
     let textColor: Color
 
-    private static let order: [(AgentStatus, String)] = [(.running, "running"), (.waiting, "waiting"), (.idle, "idle"), (.exited, "ended")]
+    private static let order: [(AgentStatus, String)] = [(.running, "running"), (.waiting, "need you"), (.done, "finished"), (.idle, "idle"), (.exited, "ended")]
 
     var body: some View {
         let statuses = appState.store.agents.map { appState.agentStatuses[$0.id] ?? .unknown }

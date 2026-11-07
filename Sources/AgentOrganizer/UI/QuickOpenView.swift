@@ -27,6 +27,9 @@ struct QuickOpenView: View {
                 .onKeyPress(.upArrow) { move(-1, in: results); return .handled }
                 .onExitCommand { dismiss() }
             Divider()
+            // Fixed height: a sheet sized to its first content (e.g. the
+            // short "no match" text) won't grow back for later results.
+            Group {
             if results.isEmpty {
                 Text(appState.store.folders.isEmpty ? "No folders added yet." : "No folders match \u{201C}\(query)\u{201D}.")
                     .foregroundStyle(.secondary)
@@ -47,13 +50,14 @@ struct QuickOpenView: View {
                         }
                         .padding(6)
                     }
-                    .frame(maxHeight: 340)
                     .onChange(of: highlighted) {
                         guard results.indices.contains(highlighted) else { return }
                         proxy.scrollTo(results[highlighted].id)
                     }
                 }
             }
+            }
+            .frame(height: 340, alignment: .top)
         }
         .frame(width: 480)
         .onAppear { fieldFocused = true }

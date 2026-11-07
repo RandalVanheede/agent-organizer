@@ -109,7 +109,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .restartAgent: "Restart Agent"
         case .killAgent: "Kill Agent"
         case .quickOpen: "Quick Open"
-        case .nextWaitingAgent: "Next Waiting Agent"
+        case .nextWaitingAgent: "Next Agent to Check"
         case .nextTab: "Next Tab"
         case .previousTab: "Previous Tab"
         case .nextFolder: "Next Folder"

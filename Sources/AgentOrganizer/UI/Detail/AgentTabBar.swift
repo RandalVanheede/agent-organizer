@@ -207,32 +207,14 @@ private struct AgentTabView: View {
 
 }
 
-/// The app's only ambient motion: a short segment sliding along the bottom
-/// of a tab while its tool streams output. A static line under Reduce Motion.
+/// A thin line under a tab whose tool is working. Static on purpose: a
+/// moving segment pulled the eye away from the terminal.
 private struct RunningIndicator: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var atEnd = false
-
     var body: some View {
-        GeometryReader { geo in
-            let segment = geo.size.width * 0.3
-            ZStack(alignment: .leading) {
-                Capsule().fill(AgentStatus.running.color.opacity(reduceMotion ? 0.9 : 0.25))
-                if !reduceMotion {
-                    Capsule()
-                        .fill(AgentStatus.running.color)
-                        .frame(width: segment)
-                        .offset(x: atEnd ? geo.size.width - segment : 0)
-                }
-            }
-        }
-        .frame(height: 2)
-        .padding(.horizontal, 8)
-        .clipped()
-        .accessibilityHidden(true)
-        .onAppear {
-            guard !reduceMotion else { return }
-            withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) { atEnd = true }
-        }
+        Capsule()
+            .fill(AgentStatus.running.color.opacity(0.7))
+            .frame(height: 2)
+            .padding(.horizontal, 8)
+            .accessibilityHidden(true)
     }
 }
