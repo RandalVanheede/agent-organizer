@@ -12,11 +12,22 @@ struct SidebarView: View {
             get: { appState.selectedFolderID },
             set: { appState.selectFolder($0) }
         )) {
-            Section("Folders") {
+            let waiting = appState.waitingAgents
+            if !waiting.isEmpty {
+                Section("Needs you") {
+                    ForEach(waiting) { agent in
+                        WaitingAgentRow(agent: agent)
+                    }
+                }
+            }
+
+            Section {
                 ForEach(visibleFolders) { folder in
                     FolderRowView(folder: folder)
                         .tag(folder.id)
                 }
+            } header: {
+                FoldersHeader()
             }
 
             if !appState.orphanSessions.isEmpty {
@@ -40,27 +51,17 @@ struct SidebarView: View {
                 .help("Add Folder… (hold for Remote)")
             }
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            if !appState.store.folders.isEmpty {
-                Picker("Show", selection: Binding(
-                    get: { appState.store.sidebarOpenAgentsOnly },
-                    set: { appState.store.setSidebarOpenAgentsOnly($0) }
-                )) {
-                    Text("Show all").tag(false)
-                    Text("Open agents only").tag(true)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .padding(8)
-            }
-        }
         .overlay {
             if appState.store.folders.isEmpty {
                 EmptySidebarView()
             } else if visibleFolders.isEmpty {
-                Text("No folders with open agents")
+                Text(appState.store.shortcut(.quickOpen).map { "No folders with open agents. Press \($0.display) to open any folder." }
+                     ?? "No folders with open agents.")
+                    .multilineTextAlignment(.center)
                     .foregroundStyle(.secondary)
+                    .padding()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(false) // keep the header's filter toggle clickable
             }
         }
     }
@@ -82,5 +83,73 @@ private struct EmptySidebarView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.background)
+    }
+}
+
+/// Section title plus the "only folders with open agents" filter toggle.
+private struct FoldersHeader: View {
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        let filtered = appState.store.sidebarOpenAgentsOnly
+        HStack {
+            Text(filtered ? "Folders with agents" : "Folders")
+            Spacer()
+            if !appState.store.folders.isEmpty {
+                Button {
+                    appState.store.setSidebarOpenAgentsOnly(!filtered)
+                } label: {
+                    Image(systemName: filtered ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                        .foregroundStyle(filtered ? Color.accentColor : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help(filtered ? "Show all folders" : "Show only folders with open agents")
+                .accessibilityLabel(filtered ? "Show all folders" : "Show only folders with open agents")
+            }
+        }
+    }
+}
+
+/// One agent waiting for the user, from any folder. Click to jump to it.
+private struct WaitingAgentRow: View {
+    @Environment(AppState.self) private var appState
+    let agent: Agent
+
+    var body: some View {
+        Button {
+            appState.selectAgent(agent)
+        } label: {
+            HStack(spacing: 8) {
+                StatusOrb(status: .waiting, size: 6)
+                    .frame(width: 16)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(appState.displayTitle(for: agent))
+                        .lineLimit(1)
+                    Text(appState.store.folder(agent.folderID)?.displayName ?? "")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                if let since = appState.waitingSince[agent.id] {
+                    // Coarse on purpose: a per-second clock would redraw the sidebar constantly.
+                    TimelineView(.periodic(from: .now, by: 30)) { context in
+                        Text(Self.age(since: since, now: context.date))
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Waiting for your input — click to open")
+    }
+
+    static func age(since: TimeInterval, now: Date) -> String {
+        let minutes = Int(now.timeIntervalSince1970 - since) / 60
+        if minutes < 1 { return "now" }
+        if minutes < 60 { return "\(minutes)m" }
+        return "\(minutes / 60)h"
     }
 }

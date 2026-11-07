@@ -16,7 +16,7 @@ final class ToastCenter {
     private let margin: CGFloat = 14
     private let spacing: CGFloat = 8
 
-    func show(title: String, body: String, onClick: @escaping () -> Void) {
+    func show(title: String, body: String, icon: String = "sparkles", onClick: @escaping () -> Void) {
         let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: width, height: 64),
             styleMask: [.nonactivatingPanel, .borderless, .utilityWindow],
@@ -38,7 +38,7 @@ final class ToastCenter {
             self?.remove(panel)
         }
 
-        let view = ToastView(title: title, message: body) {
+        let view = ToastView(title: title, message: body, icon: icon) {
             dismiss()
             onClick()
         } onClose: {
@@ -96,13 +96,14 @@ final class ToastCenter {
 private struct ToastView: View {
     let title: String
     let message: String
+    let icon: String
     let onClick: () -> Void
     let onClose: () -> Void
     @State private var hovering = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "sparkles")
+            Image(systemName: icon)
                 .font(.title3)
                 .foregroundStyle(Color.accentColor)
                 .padding(.top, 2)

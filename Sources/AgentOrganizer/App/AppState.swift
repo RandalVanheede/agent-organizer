@@ -57,6 +57,25 @@ final class AppState {
     /// Agents a Claude Code hook flagged as needing the user (Notification /
     /// Stop). Cleared when the tab is viewed. Drives the dock badge.
     var attention: Set<Agent.ID> = []
+    /// When each agent last entered `waiting` (unix seconds): orders the
+    /// sidebar's "Needs you" list oldest first.
+    var waitingSince: [Agent.ID: TimeInterval] = [:]
+    /// Quick Open (⌘P) sheet.
+    var quickOpenPresented = false
+    /// Killed agents still inside their undo window: record gone from the
+    /// store, session (and cached terminal) still alive.
+    private struct PendingKill {
+        let agent: Agent
+        let index: Int
+        /// The agent that followed it, so undo restores the order even after
+        /// other kills shifted indexes.
+        let nextAgentID: Agent.ID?
+        let host: String?
+        let task: Task<Void, Never>
+    }
+    private var pendingKills: [Agent.ID: PendingKill] = [:]
+    /// Matches the toast's on-screen time.
+    private static let killGrace: Duration = .seconds(8)
     private var statusTimer: Timer?
     private var recomputeTimer: Timer?
     /// Shells: a pane running only one of these is "idle".
@@ -80,8 +99,12 @@ final class AppState {
     private var activeSubagents: [Agent.ID: Set<String>] = [:]
 
     init() {
+        #if DEBUG
+        QuickOpenRanking.selfCheck()
+        #endif
         cache.store = store
         tmux = TmuxController()
+        tmux?.recoverIfWedged()
         reconcileSessions()
         wireControlClient()
         for folder in store.folders { watcher.watch(folder) }
@@ -125,7 +148,7 @@ final class AppState {
             flagAttention(agent.id)
             playAttentionSound()
             let folderName = store.folder(agent.folderID)?.displayName ?? ""
-            let title = agent.title ?? liveTitle(for: agent) ?? store.preset(for: agent.presetID).name
+            let title = displayTitle(for: agent)
             postNotification(
                 agentID: agent.id,
                 title: folderName.isEmpty ? title : "\(title) — \(folderName)",
@@ -233,9 +256,34 @@ final class AppState {
         selectAgent(agents[next])
     }
 
-    /// Folders as the sidebar lists them (respects the "open agents only" toggle).
+    /// Folders as the sidebar lists them (respects the "open agents only"
+    /// toggle). The selected folder always stays listed, so one picked via
+    /// Quick Open shows where you are even without agents.
     var sidebarFolders: [Folder] {
-        store.sidebarOpenAgentsOnly ? store.foldersWithAgents() : store.sortedFolders()
+        guard store.sidebarOpenAgentsOnly else { return store.sortedFolders() }
+        let withAgents = Set(store.agents.map(\.folderID))
+        return store.sortedFolders().filter { withAgents.contains($0.id) || $0.id == selectedFolderID }
+    }
+
+    /// Tool agents waiting for the user, across all folders, oldest first.
+    /// Shell presets are left out: a quiet shell isn't asking for anything.
+    var waitingAgents: [Agent] {
+        store.agents
+            .filter { agentStatuses[$0.id] == .waiting && !store.preset(for: $0.presetID).command.isEmpty }
+            .sorted { (waitingSince[$0.id] ?? 0) < (waitingSince[$1.id] ?? 0) }
+    }
+
+    /// ⌘J — cycle through `waitingAgents`, starting with the oldest.
+    func selectNextWaitingAgent() {
+        let waiting = waitingAgents
+        guard !waiting.isEmpty else { NSSound.beep(); return }
+        let idx = selectedAgent.flatMap { current in waiting.firstIndex { $0.id == current.id } }
+        selectAgent(waiting[idx.map { ($0 + 1) % waiting.count } ?? 0])
+    }
+
+    /// User-set name, else the tool's live title, else the preset name.
+    func displayTitle(for agent: Agent) -> String {
+        agent.title ?? liveTitle(for: agent) ?? store.preset(for: agent.presetID).name
     }
 
     /// ⌘↑ / ⌘↓ — move through the sidebar's folders (no wrap, like a list).
@@ -270,7 +318,13 @@ final class AppState {
     func startStatusPolling() {
         statusTimer?.invalidate()
         refreshStatuses()
-        if let tmux { resourceMonitor.start(tmux: tmux) }
+        // Only our agents' panes: a pane title can forge extra subscription
+        // entries (see TmuxControlModeClient), so never walk arbitrary pids.
+        resourceMonitor.start { [weak self] in
+            guard let self else { return [:] }
+            let ours = Set(self.store.agents.map(\.tmuxSession))
+            return self.controlClient.panes.filter { ours.contains($0.key) }.mapValues(\.pid)
+        }
         // Slow safety net only — the control-mode client is the primary,
         // near-instant path. If it silently dies this still catches up.
         statusTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { [weak self] _ in
@@ -286,11 +340,43 @@ final class AppState {
 
     private var liveSessions: Set<String> = []
 
+    @ObservationIgnored private var refreshGeneration = 0
+    @ObservationIgnored private var refreshInFlight = false
+    @ObservationIgnored private var refreshPending = false
+
+    /// Queries tmux off the main thread (a slow or stuck server must never
+    /// freeze the UI). At most one query runs; requests arriving meanwhile
+    /// collapse into one follow-up pass. A result is dropped if local state
+    /// changed after it started (`refreshGeneration`).
     func refreshStatuses() {
         guard let tmux else { return }
-        liveSessions = tmux.listSessions()
-        refreshOrphans(live: liveSessions)
-        recomputeStatuses()
+        refreshGeneration += 1
+        guard !refreshInFlight else { refreshPending = true; return }
+        refreshInFlight = true
+        let generation = refreshGeneration
+        let known = Set(store.agents.map(\.tmuxSession)).union(pendingKills.values.map(\.agent.tmuxSession))
+        Task.detached { [weak self] in
+            let live = tmux.listSessions()
+            let untracked = live.filter { !$0.hasPrefix("__ao_") && !known.contains($0) }.sorted()
+            let cwds = untracked.map { (name: $0, cwd: tmux.paneCurrentPath(session: $0)) }
+            await MainActor.run {
+                guard let self else { return }
+                self.refreshInFlight = false
+                if self.refreshPending || generation != self.refreshGeneration {
+                    self.refreshPending = false
+                    self.refreshStatuses()
+                    return
+                }
+                self.liveSessions = live
+                self.orphanSessions = cwds.map { entry in
+                    let match = entry.cwd.flatMap { path in
+                        self.store.folders.first { !$0.isRemote && path.hasPrefix($0.path.path) }
+                    }
+                    return OrphanSession(name: entry.name, cwd: entry.cwd, matchingFolderID: match?.id)
+                }
+                self.recomputeStatuses()
+            }
+        }
     }
 
     /// Three-way status from the control-mode pane snapshot:
@@ -325,6 +411,7 @@ final class AppState {
             if old != new {
                 agentStatuses[agent.id] = new
                 changed = true
+                if new == .waiting { waitingSince[agent.id] = now } else { waitingSince.removeValue(forKey: agent.id) }
             }
             // Quiet-after-running heuristic (for persistent tools without
             // hooks, e.g. OpenCode). Plain shells go quiet between commands
@@ -409,19 +496,6 @@ final class AppState {
         return usage?.isNegligible == true ? nil : usage
     }
 
-    private func refreshOrphans(live: Set<String>) {
-        guard let tmux else { orphanSessions = []; return }
-        let known = Set(store.agents.map { $0.tmuxSession })
-        let untracked = live.filter { !$0.hasPrefix("__ao_") && !known.contains($0) }
-        orphanSessions = untracked.sorted().map { name in
-            let cwd = tmux.paneCurrentPath(session: name)
-            let match = cwd.flatMap { path in
-                store.folders.first { !$0.isRemote && path.hasPrefix($0.path.path) }
-            }
-            return OrphanSession(name: name, cwd: cwd, matchingFolderID: match?.id)
-        }
-    }
-
     func adopt(_ orphan: OrphanSession, into folder: Folder) {
         var relativeCwd = ""
         if let cwd = orphan.cwd {
@@ -442,6 +516,7 @@ final class AppState {
 
     func recheckTmux() {
         tmux = TmuxController()
+        tmux?.recoverIfWedged()
         if tmux != nil {
             reconcileSessions()
             wireControlClient()
@@ -596,35 +671,104 @@ final class AppState {
     func createAgent(folder: Folder, preset: AgentPreset, relativeCwd: String) {
         let session = "ao_\(Self.slug(folder.displayName))_\(UUID().uuidString.prefix(8).lowercased())"
         let agent = Agent(folderID: folder.id, relativeCwd: relativeCwd, presetID: preset.id, tmuxSession: session)
-        let cwd = agent.resolvedCwd(folderPath: folder.path)
-        if let host = folder.host {
-            let launch = RemoteSession.launchCommand(host: host, session: session, cwd: cwd.path, command: preset.command)
-            tmux?.ensureSession(name: session, cwd: FileManager.default.homeDirectoryForCurrentUser, command: nil, paneCommand: launch)
-        } else {
-            tmux?.ensureSession(name: session, cwd: cwd, command: preset.command.isEmpty ? nil : preset.command)
-        }
+        startSession(for: agent, in: folder, command: preset.command)
         store.addAgent(agent)
+        liveSessions.insert(session) // an in-flight refresh mustn't mark it exited
+        refreshStatuses()
         selectAgent(agent)
         newAgentPopoverFolderID = nil
     }
 
+    @discardableResult
+    private func startSession(for agent: Agent, in folder: Folder, command: String) -> Bool {
+        let cwd = agent.resolvedCwd(folderPath: folder.path)
+        if let host = folder.host {
+            let launch = RemoteSession.launchCommand(host: host, session: agent.tmuxSession, cwd: cwd.path, command: command)
+            return tmux?.ensureSession(name: agent.tmuxSession, cwd: FileManager.default.homeDirectoryForCurrentUser, command: nil, paneCommand: launch) ?? false
+        }
+        return tmux?.ensureSession(name: agent.tmuxSession, cwd: cwd, command: command.isEmpty ? nil : command) ?? false
+    }
+
+    /// Bumped when an agent's terminal view is replaced, so its pane gets a
+    /// new SwiftUI identity and attaches the fresh view.
+    var terminalEpochs: [Agent.ID: Int] = [:]
+
+    /// Closing a tab is undoable for a few seconds: the record and tab go
+    /// away now, the session only after the grace period (or on quit).
+    /// An agent whose session already ended is removed right away.
     func killAgent(_ agent: Agent) {
-        cache.discard(agent.id)
-        store.removeAgent(agent, tmux: tmux)
+        let host = store.folder(agent.folderID)?.host
+        let alreadyEnded = agentStatuses[agent.id] == .exited
+        let nextAgentID = store.agents.firstIndex { $0.id == agent.id }
+            .flatMap { store.agents.indices.contains($0 + 1) ? store.agents[$0 + 1].id : nil }
+        guard let index = store.detachAgent(agent) else { return }
         if activeAgentByFolder[agent.folderID] == agent.id {
             activeAgentByFolder.removeValue(forKey: agent.folderID)
         }
         if splitAgentID == agent.id { splitAgentID = nil }
         clearAttention(agent.id)
         persistUISelection()
+
+        if alreadyEnded {
+            cache.discard(agent.id)
+            store.killSessions(of: agent, host: host, tmux: tmux)
+            return
+        }
+        let title = displayTitle(for: agent)
+        let task = Task { [weak self] in
+            try? await Task.sleep(for: Self.killGrace)
+            guard !Task.isCancelled else { return }
+            self?.finalizeKill(agent.id)
+        }
+        pendingKills[agent.id] = PendingKill(agent: agent, index: index, nextAgentID: nextAgentID, host: host, task: task)
+        ToastCenter.shared.show(title: "Killed \(title)", body: "Click to undo.", icon: "arrow.uturn.backward") { [weak self] in
+            self?.undoKill(agent.id)
+        }
+    }
+
+    private func finalizeKill(_ id: Agent.ID) {
+        guard let pending = pendingKills.removeValue(forKey: id) else { return }
+        pending.task.cancel()
+        cache.discard(id)
+        store.killSessions(of: pending.agent, host: pending.host, tmux: tmux)
+    }
+
+    private func undoKill(_ id: Agent.ID) {
+        guard let pending = pendingKills[id] else { return }
+        // Its folder was removed meanwhile: nothing to put the tab back into.
+        guard store.folder(pending.agent.folderID) != nil else { return finalizeKill(id) }
+        pendingKills.removeValue(forKey: id)
+        pending.task.cancel()
+        let index = pending.nextAgentID.flatMap { next in store.agents.firstIndex { $0.id == next } } ?? pending.index
+        store.reinsertAgent(pending.agent, at: index)
+        selectAgent(pending.agent)
+    }
+
+    /// On quit: kills still in their undo window happen now, so they don't
+    /// come back as unmanaged sessions next launch.
+    func finalizePendingKills() {
+        for id in Array(pendingKills.keys) { finalizeKill(id) }
     }
 
     /// Kill the pane's current process, get a fresh shell, then run the
-    /// tool's resume command (or its launch command if it has none).
+    /// tool's resume command (or its launch command if it has none). A
+    /// session that already ended is started fresh under the same name.
     func restartAgent(_ agent: Agent) {
         guard let folder = store.folder(agent.folderID) else { return }
         let preset = store.preset(for: agent.presetID)
         let command = preset.resumeCommand ?? preset.command
+        if agentStatuses[agent.id] == .exited {
+            guard startSession(for: agent, in: folder, command: command) else {
+                NSSound.beep() // e.g. its folder was deleted; the card stays up
+                return
+            }
+            cache.discard(agent.id) // the old attach client died with the session
+            terminalEpochs[agent.id, default: 0] += 1
+            liveSessions.insert(agent.tmuxSession) // don't flash "exited" until the refresh lands
+            agentStatuses[agent.id] = .unknown
+            refreshStatuses()
+            return
+        }
         if let host = folder.host {
             let restart = RemoteSession.restartCommand(host: host, session: agent.tmuxSession,
                                                        cwd: agent.resolvedCwd(folderPath: folder.path).path, command: command)

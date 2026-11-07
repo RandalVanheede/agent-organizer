@@ -47,7 +47,45 @@ private struct AgentPane: View {
             fontSize: appState.store.terminalFontSize,
             remoteHost: folder.host
         )
-        .id(agent.id)
+        .id("\(agent.id)-\(appState.terminalEpochs[agent.id] ?? 0)")
+        .overlay {
+            if appState.agentStatuses[agent.id] == .exited {
+                SessionEndedView(agent: agent)
+            }
+        }
+    }
+}
+
+/// Replaces a dead terminal with what you can do about it. The old output
+/// stays visible, dimmed, behind the card.
+private struct SessionEndedView: View {
+    @Environment(AppState.self) private var appState
+    let agent: Agent
+
+    var body: some View {
+        ZStack {
+            Rectangle().fill(.black.opacity(0.35))
+            VStack(spacing: 10) {
+                Image(systemName: "stop.circle")
+                    .font(.system(size: 28))
+                    .foregroundStyle(.secondary)
+                Text("Session ended")
+                    .font(.title3.weight(.semibold))
+                Text("\(appState.displayTitle(for: agent)) is no longer running. Restart it here, or close the tab.")
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: 300)
+                HStack {
+                    Button("Close Tab") { appState.killAgent(agent) }
+                    // No default-action key: the dead terminal holds focus, and
+                    // a split view could show two of these cards.
+                    Button("Restart") { appState.restartAgent(agent) }
+                }
+                .padding(.top, 4)
+            }
+            .padding(24)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+        }
     }
 }
 

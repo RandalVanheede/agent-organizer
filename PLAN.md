@@ -210,6 +210,14 @@ Preferences › Shortcuts rebinds every app command (Add Folder, New Agent/Shell
 ### Remote folders (HBY-13)
 "Add Remote Folder…" (File menu / hold the sidebar + button) takes an ssh host (`user@host` or `~/.ssh/config` alias) + absolute remote path; stored as `Folder.host`. A remote agent is still a local tmux session, but it runs `sh -c 'ssh -t host …'` attached to a same-named session on the remote's `tmux -L agent-organizer` server (`RemoteSession`), so the tool survives the Mac sleeping; ssh exit 255 → reconnect loop. Kill also kills the remote session (one-shot ssh, BatchMode). Not covered: folder scanning/branches, Claude hooks (attention comes from the quiet-after-running heuristic), live titles, orphan detection on the remote; remote panes never show "idle".
 
+### Attention & navigation pass
+- **Needs you** sidebar section: tool agents in `waiting` across all folders, oldest first (`AppState.waitingSince`), shell presets excluded. ⌘J (`nextWaitingAgent`) cycles through them.
+- **Status shapes**: running = dot, waiting = dot + halo, idle = hollow ring, exited = ×, unknown = dashed ring — readable without colour. Running tabs get a sliding 2 pt line (static under Reduce Motion), the app's only ambient animation.
+- **Tab subtitle** shows path/branch only; CPU/memory moved to the tooltip and appear on the tab (orange) only when ≥ 50 % CPU or ≥ 1 GB.
+- **Undoable kill** (8 s toast) and a **Session ended** card (Restart / Close Tab) for dead panes.
+- **Filter** ("folders with agents only") is a toggle in the Folders section header; the selected folder always stays listed.
+- **Quick Open** (⌘P, `quickOpen`; replaces the unused Print item): fuzzy folder search over *all* folders regardless of the filter. Ranking in `QuickOpenRanking` (name prefix > substring > letters-in-order > path), self-checked in debug builds.
+
 ## 11. Risks / open points
 
 - **Shift+Enter / modifier keys in Claude Code** through tmux need `extended-keys on` + SwiftTerm's kitty/CSI‑u support. Verify early in M2; fallback: Option+Enter or `claude /terminal-setup`‑style keybinding.

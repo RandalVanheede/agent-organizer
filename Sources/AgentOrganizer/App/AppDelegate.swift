@@ -30,6 +30,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     key.performClose(nil)
                     return true
                 }
+                // A sheet (Quick Open, New Agent) is in front: don't kill the agent behind it.
+                if NSApp.keyWindow?.sheetParent != nil { return false }
                 guard let appState = self.appState,
                       appState.store.shortcut(.killAgent)?.matches(event) == true else { return false }
                 if let agent = appState.selectedAgent { appState.killAgent(agent) }
@@ -60,6 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// off, so quitting never touches tmux sessions — they are separate
     /// processes on their own server and simply keep running.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        appState?.finalizePendingKills()
         if let appState, appState.store.killAgentsOnQuit {
             for agent in appState.store.agents {
                 appState.tmux?.killSession(agent.tmuxSession)

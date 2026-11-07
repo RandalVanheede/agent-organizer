@@ -4,6 +4,7 @@ import SwiftUI
 struct AgentOrganizerApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var appState = AppState()
+    @State private var updater = AppUpdater()
 
     var body: some Scene {
         WindowGroup {
@@ -16,8 +17,16 @@ struct AgentOrganizerApp: App {
                 }
         }
         .commands {
-            AppCommands(appState: appState)
+            AppCommands(appState: appState, updater: updater)
         }
+
+        Window("About Agent Organizer", id: AboutView.windowID) {
+            AboutView()
+                .environment(appState)
+                .environment(updater)
+        }
+        .windowStyle(.hiddenTitleBar)
+        .windowResizability(.contentSize)
 
         Settings {
             PreferencesView()

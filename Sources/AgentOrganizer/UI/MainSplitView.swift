@@ -25,6 +25,9 @@ struct MainSplitView: View {
         )) { folder in
             NewAgentPopoverView(folder: folder)
         }
+        .sheet(isPresented: $appState.quickOpenPresented) {
+            QuickOpenView()
+        }
         .alert(
             "Remove \"\(appState.folderPendingRemoval?.displayName ?? "")\"?",
             isPresented: Binding(

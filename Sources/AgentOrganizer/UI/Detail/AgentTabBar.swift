@@ -102,18 +102,21 @@ private struct AgentTabView: View {
     private var preset: AgentPreset { appState.store.preset(for: agent.presetID) }
     private var status: AgentStatus { appState.agentStatuses[agent.id] ?? .unknown }
     private var resourceUsage: ResourceUsage? { appState.resourceUsage(for: agent) }
-    private var displayTitle: String {
-        agent.title ?? appState.liveTitle(for: agent) ?? preset.name
-    }
+    private var displayTitle: String { appState.displayTitle(for: agent) }
     private var subtitle: String? {
         guard !agent.relativeCwd.isEmpty else { return nil }
         let branch = appState.store.folder(agent.folderID)?
             .subRepos.first { $0.relativePath == agent.relativeCwd }?.branch
         return branch.map { "\(agent.relativeCwd) · \($0)" } ?? agent.relativeCwd
     }
-    private var secondaryLine: String? {
-        let parts = [subtitle, resourceUsage?.compactLabel].compactMap { $0 }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    /// Only unusual load earns space on the tab; the rest is in the tooltip.
+    private var hotUsage: ResourceUsage? { resourceUsage.flatMap { $0.isHot ? $0 : nil } }
+    private var tooltip: String {
+        var lines = [agent.tmuxSession]
+        if let usage = resourceUsage {
+            lines.append("CPU \(usage.cpuLabel), memory \(usage.memoryLabel), \(usage.processCount) processes")
+        }
+        return lines.joined(separator: "\n")
     }
 
     var body: some View {
@@ -128,11 +131,20 @@ private struct AgentTabView: View {
                     Text(displayTitle)
                         .font(.callout)
                         .lineLimit(1)
-                    if let secondaryLine {
-                        Text(secondaryLine)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                    // One line, so the 34 pt bar never grows a third row.
+                    if subtitle != nil || hotUsage != nil {
+                        HStack(spacing: 6) {
+                            if let subtitle {
+                                Text(subtitle).foregroundStyle(.secondary)
+                            }
+                            if let hot = hotUsage {
+                                Text("CPU \(hot.cpuLabel), \(hot.memoryLabel)")
+                                    .monospacedDigit()
+                                    .foregroundStyle(.orange)
+                            }
+                        }
+                        .font(.caption2)
+                        .lineLimit(1)
                     }
                 }
                 // Close = kill, instantly, no confirmation (user's call).
@@ -158,12 +170,15 @@ private struct AgentTabView: View {
                 RoundedRectangle(cornerRadius: 6)
                     .fill(isActive ? Color.accentColor.opacity(0.18) : (isHovering ? Color.primary.opacity(0.06) : .clear))
             )
+            .overlay(alignment: .bottom) {
+                if status == .running { RunningIndicator() }
+            }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .foregroundStyle(isActive ? .primary : .secondary)
         .onHover { isHovering = $0 }
-        .help(agent.tmuxSession)
+        .help(tooltip)
         .contextMenu {
             Button("Restart") { appState.restartAgent(agent) }
             Button("Rename…") {
@@ -190,4 +205,34 @@ private struct AgentTabView: View {
         }
     }
 
+}
+
+/// The app's only ambient motion: a short segment sliding along the bottom
+/// of a tab while its tool streams output. A static line under Reduce Motion.
+private struct RunningIndicator: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var atEnd = false
+
+    var body: some View {
+        GeometryReader { geo in
+            let segment = geo.size.width * 0.3
+            ZStack(alignment: .leading) {
+                Capsule().fill(AgentStatus.running.color.opacity(reduceMotion ? 0.9 : 0.25))
+                if !reduceMotion {
+                    Capsule()
+                        .fill(AgentStatus.running.color)
+                        .frame(width: segment)
+                        .offset(x: atEnd ? geo.size.width - segment : 0)
+                }
+            }
+        }
+        .frame(height: 2)
+        .padding(.horizontal, 8)
+        .clipped()
+        .accessibilityHidden(true)
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) { atEnd = true }
+        }
+    }
 }

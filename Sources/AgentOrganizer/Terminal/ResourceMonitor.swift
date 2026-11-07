@@ -1,4 +1,5 @@
-import Foundation
+import AppKit
+import Darwin
 import Observation
 
 struct ResourceUsage {
@@ -10,31 +11,42 @@ struct ResourceUsage {
 
     var isNegligible: Bool { cpuPercent < 0.1 && memoryBytes < 10 * 1_048_576 }
 
-    var compactLabel: String {
-        let cpu = cpuPercent < 10
-            ? String(format: "%.1f%%", cpuPercent)
-            : String(format: "%.0f%%", cpuPercent)
-        let mem: String
-        if memoryBytes >= 1_073_741_824 {
-            mem = String(format: "%.1fG", Double(memoryBytes) / 1_073_741_824)
-        } else {
-            mem = String(format: "%.0fM", Double(memoryBytes) / 1_048_576)
-        }
-        return "\(cpu) · \(mem)"
+    /// Worth surfacing on the tab itself rather than only in its tooltip.
+    var isHot: Bool { cpuPercent >= 50 || memoryBytes >= 1_073_741_824 }
+
+    var cpuLabel: String {
+        cpuPercent < 10 ? String(format: "%.1f%%", cpuPercent) : String(format: "%.0f%%", cpuPercent)
+    }
+
+    var memoryLabel: String {
+        memoryBytes >= 1_073_741_824
+            ? String(format: "%.1f GB", Double(memoryBytes) / 1_073_741_824)
+            : String(format: "%.0f MB", Double(memoryBytes) / 1_048_576)
     }
 }
 
-/// Polls process stats for every tmux pane on the app's socket and
-/// aggregates CPU + RSS across each pane's full process tree.
+/// Samples CPU + RSS for every agent's pane process tree straight from the
+/// kernel (libproc) — no `ps`/`tmux` spawn. Pane PIDs come from the control
+/// mode subscription. Paused while the app is in the background, where no
+/// tab (and so no figure) is visible.
 @MainActor
 @Observable
 final class ResourceMonitor {
     private(set) var usageBySession: [String: ResourceUsage] = [:]
-    private var timer: Timer?
-    private weak var tmux: TmuxController?
+    @ObservationIgnored private var timer: Timer?
+    @ObservationIgnored private var panePids: () -> [String: pid_t] = { [:] }
+    /// CPU time (ns) per pid at the previous sample, for the delta.
+    @ObservationIgnored private var lastCPU: [pid_t: UInt64] = [:]
+    @ObservationIgnored private var lastSampleAt: UInt64 = 0
 
-    func start(tmux: TmuxController) {
-        self.tmux = tmux
+    private static let timebase: (numer: UInt64, denom: UInt64) = {
+        var info = mach_timebase_info_data_t()
+        mach_timebase_info(&info)
+        return (UInt64(info.numer), UInt64(info.denom))
+    }()
+
+    func start(panePids: @escaping () -> [String: pid_t]) {
+        self.panePids = panePids
         timer?.invalidate()
         poll()
         timer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
@@ -43,69 +55,56 @@ final class ResourceMonitor {
     }
 
     private func poll() {
-        guard let tmux else { return }
-        let sessionPids = tmux.panePids()
-        guard !sessionPids.isEmpty else {
-            usageBySession = [:]
+        guard NSApp?.isActive ?? true else {
+            // Stale deltas would be averaged over the whole background stint,
+            // and old figures shouldn't linger as if current.
+            lastCPU = [:]
+            lastSampleAt = 0
+            if !usageBySession.isEmpty { usageBySession = [:] }
             return
         }
-
-        let processes = Self.allProcesses()
-
-        var children: [pid_t: [pid_t]] = [:]
-        for proc in processes.values {
-            children[proc.ppid, default: []].append(proc.pid)
-        }
-
+        let roots = panePids()
+        let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+        let elapsed = lastSampleAt == 0 ? 0 : Double(now - lastSampleAt)
+        var nextCPU: [pid_t: UInt64] = [:]
         var result: [String: ResourceUsage] = [:]
-        for (session, rootPid) in sessionPids {
-            var cpu = 0.0
-            var rss: Int64 = 0
-            var count = 0
-            var stack = [rootPid]
+
+        for (session, root) in roots {
+            var usage = ResourceUsage.zero
+            var stack = [root]
             while let pid = stack.popLast() {
-                if let proc = processes[pid] {
-                    cpu += proc.cpu
-                    rss += proc.rss
-                    count += 1
+                if let (cpuNs, rss) = Self.taskInfo(pid) {
+                    nextCPU[pid] = cpuNs
+                    if elapsed > 0, let previous = lastCPU[pid], cpuNs >= previous {
+                        usage.cpuPercent += Double(cpuNs - previous) / elapsed * 100
+                    }
+                    usage.memoryBytes += rss
+                    usage.processCount += 1
                 }
-                if let kids = children[pid] { stack.append(contentsOf: kids) }
+                stack.append(contentsOf: Self.children(of: pid))
             }
-            result[session] = ResourceUsage(cpuPercent: cpu, memoryBytes: rss, processCount: count)
+            result[session] = usage
         }
+        lastCPU = nextCPU
+        lastSampleAt = now
         usageBySession = result
     }
 
-    private struct ProcessInfo {
-        var pid: pid_t
-        var ppid: pid_t
-        var cpu: Double
-        var rss: Int64
+    /// Total CPU time (ns) and resident size of one process; nil once it's gone.
+    private static func taskInfo(_ pid: pid_t) -> (UInt64, Int64)? {
+        var info = proc_taskinfo()
+        let size = Int32(MemoryLayout<proc_taskinfo>.stride)
+        guard proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &info, size) == size else { return nil }
+        // pti_total_* are mach ticks on Apple silicon, not nanoseconds.
+        let ticks = info.pti_total_user + info.pti_total_system
+        return (ticks * timebase.numer / timebase.denom, Int64(info.pti_resident_size))
     }
 
-    private static func allProcesses() -> [pid_t: ProcessInfo] {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/ps")
-        process.arguments = ["-eo", "pid=,ppid=,pcpu=,rss="]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        do { try process.run() } catch { return [:] }
-        process.waitUntilExit()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        guard let output = String(data: data, encoding: .utf8) else { return [:] }
-
-        var map: [pid_t: ProcessInfo] = [:]
-        for line in output.split(separator: "\n") {
-            let cols = line.split(separator: " ", maxSplits: 3, omittingEmptySubsequences: true)
-            guard cols.count == 4,
-                  let pid = pid_t(cols[0]),
-                  let ppid = pid_t(cols[1]),
-                  let cpu = Double(cols[2]),
-                  let rssKB = Int64(cols[3])
-            else { continue }
-            map[pid] = ProcessInfo(pid: pid, ppid: ppid, cpu: cpu, rss: rssKB * 1024)
-        }
-        return map
+    private static func children(of pid: pid_t) -> [pid_t] {
+        // shortcut: caps at 256 direct children per process; agent trees are far smaller.
+        var buffer = [pid_t](repeating: 0, count: 256)
+        let count = proc_listchildpids(pid, &buffer, Int32(buffer.count * MemoryLayout<pid_t>.size))
+        guard count > 0 else { return [] }
+        return Array(buffer.prefix(Int(count)))
     }
 }

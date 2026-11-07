@@ -164,7 +164,21 @@ final class Store {
         save()
     }
 
-    private func killSessions(of agent: Agent, host: String?, tmux: TmuxController?) {
+    /// Drops the record but leaves its session running (the grace period
+    /// before an undoable kill). Returns its index for `reinsertAgent`.
+    func detachAgent(_ agent: Agent) -> Int? {
+        guard let idx = agents.firstIndex(where: { $0.id == agent.id }) else { return nil }
+        agents.remove(at: idx)
+        save()
+        return idx
+    }
+
+    func reinsertAgent(_ agent: Agent, at index: Int) {
+        agents.insert(agent, at: min(index, agents.count))
+        save()
+    }
+
+    func killSessions(of agent: Agent, host: String?, tmux: TmuxController?) {
         tmux?.killSession(agent.tmuxSession)
         if let host { RemoteSession.kill(host: host, session: agent.tmuxSession) }
     }

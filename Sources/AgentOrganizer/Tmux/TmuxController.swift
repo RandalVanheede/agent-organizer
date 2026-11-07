@@ -4,7 +4,10 @@ import Foundation
 /// socket. The tmux *server* is a separate long-lived process tmux itself
 /// spawns on first use — it is not something this app manages directly, and
 /// it survives this app quitting.
-final class TmuxController {
+///
+/// Immutable, so it is `Sendable`: periodic queries run on background tasks
+/// (each call blocks its caller until tmux exits).
+final class TmuxController: Sendable {
     let socketPath: String
     let tmuxBinary: String
     let confPath: String?
@@ -19,14 +22,18 @@ final class TmuxController {
 
     @discardableResult
     private func run(_ args: [String]) -> (status: Int32, output: String) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: tmuxBinary)
         var fullArgs = ["-S", socketPath]
         if let confPath {
             fullArgs += ["-f", confPath]
         }
-        fullArgs += args
-        process.arguments = fullArgs
+        return Self.exec(tmuxBinary, fullArgs + args)
+    }
+
+    @discardableResult
+    private static func exec(_ path: String, _ args: [String]) -> (status: Int32, output: String) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: path)
+        process.arguments = args
 
         let outPipe = Pipe()
         process.standardOutput = outPipe
@@ -40,9 +47,53 @@ final class TmuxController {
         } catch {
             return (-1, "")
         }
+        // A hung server must not park the caller's thread forever.
+        DispatchQueue.global().asyncAfter(deadline: .now() + 10) {
+            if process.isRunning { process.terminate() }
+        }
         let data = outPipe.fileHandleForReading.readDataToEndOfFile()
         done.wait()
         return (process.terminationStatus, String(data: data, encoding: .utf8) ?? "")
+    }
+
+    /// A server whose last session died while a client stayed attached (our
+    /// control client, orphaned when an earlier app run died) waits for that
+    /// client forever and drops every new connection: "server exited
+    /// unexpectedly". It has no sessions left, so kill every process on our
+    /// socket; the next tmux command starts a fresh server. Checked twice so
+    /// a server that is merely restarting is left alone.
+    @discardableResult
+    func recoverIfWedged() -> Bool {
+        func wedged() -> Bool {
+            let (status, output) = run(["list-sessions"])
+            return status != 0 && output.contains("server exited unexpectedly")
+        }
+        guard wedged() else { return false }
+        Thread.sleep(forTimeInterval: 0.3)
+        guard wedged() else { return false }
+        Self.exec("/usr/bin/pkill", ["-f", "--", "-S " + NSRegularExpression.escapedPattern(for: socketPath) + "( |$)"])
+        Thread.sleep(forTimeInterval: 0.3)
+        return true
+    }
+
+    /// Terminates control-mode clients on `session` whose app is gone (they
+    /// were reparented to launchd) — left behind when an earlier run died.
+    /// A live app instance's client is left alone.
+    func killOrphanedControlClients(session: String) {
+        let (status, output) = run(["list-clients", "-t", session, "-F", "#{client_pid} #{client_control_mode}"])
+        guard status == 0 else { return }
+        for line in output.split(separator: "\n") {
+            let f = line.split(separator: " ")
+            guard f.count == 2, f[1] == "1", let pid = pid_t(f[0]), Self.parentPID(of: pid) == 1 else { continue }
+            kill(pid, SIGTERM)
+        }
+    }
+
+    private static func parentPID(of pid: pid_t) -> pid_t? {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.stride)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
+        return pid_t(info.pbi_ppid)
     }
 
     func sessionExists(_ name: String) -> Bool {
@@ -112,19 +163,6 @@ final class TmuxController {
         guard status == 0 else { return nil }
         let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
-    }
-
-    /// Session name → pane PID for every pane on this socket.
-    func panePids() -> [String: pid_t] {
-        let (status, output) = run(["list-panes", "-a", "-F", "#{session_name} #{pane_pid}"])
-        guard status == 0 else { return [:] }
-        var map: [String: pid_t] = [:]
-        for line in output.split(separator: "\n") {
-            let parts = line.split(separator: " ")
-            guard parts.count == 2, let pid = pid_t(parts[1]) else { continue }
-            map[String(parts[0])] = pid
-        }
-        return map
     }
 
     /// The working directory a session's active pane currently sits in.

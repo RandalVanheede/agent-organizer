@@ -2,8 +2,18 @@ import SwiftUI
 
 struct AppCommands: Commands {
     var appState: AppState
+    var updater: AppUpdater
+    @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
+        CommandGroup(replacing: .appInfo) {
+            Button("About Agent Organizer") { openWindow(id: AboutView.windowID) }
+            if updater.isAvailable {
+                Button("Check for Updates…") { updater.checkForUpdates() }
+                    .disabled(!updater.canCheckForUpdates)
+            }
+        }
+
         CommandGroup(replacing: .newItem) {
             Button("Add Folder…") {
                 appState.presentAddFolderPanel()
@@ -37,7 +47,17 @@ struct AppCommands: Commands {
             .keyboardShortcut(appState.store.shortcut(.closeWindow)?.keyboardShortcut)
         }
 
+        // ⌘P belongs to Quick Open; there is nothing to print.
+        CommandGroup(replacing: .printItem) {}
+
         CommandMenu("Agent") {
+            Button("Quick Open…") { appState.quickOpenPresented = true }
+                .keyboardShortcut(appState.store.shortcut(.quickOpen)?.keyboardShortcut)
+            Button("Next Waiting Agent") { appState.selectNextWaitingAgent() }
+                .keyboardShortcut(appState.store.shortcut(.nextWaitingAgent)?.keyboardShortcut)
+
+            Divider()
+
             Button("Restart") {
                 if let agent = appState.selectedAgent {
                     appState.restartAgent(agent)

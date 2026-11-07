@@ -23,19 +23,36 @@ extension AgentStatus {
     }
 }
 
+/// Status as colour *and* shape, so it reads without colour vision:
+/// running = solid dot, waiting = dot with a halo, idle = hollow ring,
+/// exited = ×, unknown = dashed ring.
 struct StatusOrb: View {
     let status: AgentStatus
     var size: CGFloat = 7
 
     var body: some View {
-        Circle()
-            .fill(status.color)
+        shape
             .frame(width: size, height: size)
-            .overlay {
-                if status == .waiting {
-                    Circle().stroke(status.color.opacity(0.5), lineWidth: 2).frame(width: size + 4, height: size + 4)
-                }
-            }
             .help(status.label)
+            .accessibilityElement()
+            .accessibilityLabel(status.label)
+    }
+
+    @ViewBuilder private var shape: some View {
+        switch status {
+        case .running:
+            Circle().fill(status.color)
+        case .waiting:
+            Circle().fill(status.color)
+                .overlay { Circle().stroke(status.color.opacity(0.5), lineWidth: 2).frame(width: size + 4, height: size + 4) }
+        case .idle:
+            Circle().strokeBorder(status.color, lineWidth: 1.5)
+        case .exited:
+            Image(systemName: "xmark")
+                .font(.system(size: size + 1, weight: .heavy))
+                .foregroundStyle(status.color)
+        case .unknown:
+            Circle().strokeBorder(status.color, style: StrokeStyle(lineWidth: 1, dash: [2, 1.5]))
+        }
     }
 }

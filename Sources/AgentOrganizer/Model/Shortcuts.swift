@@ -88,7 +88,7 @@ struct KeyCombo: Codable, Hashable {
 /// `Store.setShortcut` moves a combo off whatever action held it.
 enum ShortcutAction: String, CaseIterable, Identifiable {
     case addFolder, newAgent, newShell, closeWindow
-    case restartAgent, killAgent
+    case restartAgent, killAgent, quickOpen, nextWaitingAgent
     case nextTab, previousTab, nextFolder, previousFolder
     case wordBack, wordForward, lineStart, lineEnd, newline
 
@@ -96,7 +96,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
 
     static let appActions: [ShortcutAction] = [
         .addFolder, .newAgent, .newShell, .closeWindow,
-        .restartAgent, .killAgent, .nextTab, .previousTab, .nextFolder, .previousFolder,
+        .restartAgent, .killAgent, .quickOpen, .nextWaitingAgent, .nextTab, .previousTab, .nextFolder, .previousFolder,
     ]
     static let terminalActions: [ShortcutAction] = [.wordBack, .wordForward, .lineStart, .lineEnd, .newline]
 
@@ -108,6 +108,8 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .closeWindow: "Close Window"
         case .restartAgent: "Restart Agent"
         case .killAgent: "Kill Agent"
+        case .quickOpen: "Quick Open"
+        case .nextWaitingAgent: "Next Waiting Agent"
         case .nextTab: "Next Tab"
         case .previousTab: "Previous Tab"
         case .nextFolder: "Next Folder"
@@ -128,6 +130,8 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .closeWindow: KeyCombo(key: "w", modifiers: [.command, .shift])
         case .restartAgent: .unbound
         case .killAgent: KeyCombo(key: "w", modifiers: .command)
+        case .quickOpen: KeyCombo(key: "p", modifiers: .command)
+        case .nextWaitingAgent: KeyCombo(key: "j", modifiers: .command)
         case .nextTab: KeyCombo(key: "]", modifiers: [.command, .shift])
         case .previousTab: KeyCombo(key: "[", modifiers: [.command, .shift])
         case .nextFolder: KeyCombo(key: "down", modifiers: .command)

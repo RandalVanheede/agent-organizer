@@ -4,6 +4,7 @@ import Foundation
 /// format subscription (see `TmuxControlModeClient`).
 struct PaneSnapshot: Equatable {
     let paneID: String          // "%12" — what `TMUX_PANE` is inside the pane
+    let pid: pid_t              // `#{pane_pid}`, root of the pane's process tree
     let command: String         // `#{pane_current_command}`, e.g. "zsh", "node"
     let activity: TimeInterval  // `#{window_activity}`, unix seconds
     let title: String           // `#{pane_title}` (OSC 0/2), "" when still tmux's default (host name)
@@ -43,6 +44,7 @@ final class TmuxControlModeClient {
 
     /// window id ("@N") -> session name
     private var windowToSession: [String: String] = [:]
+    private var windowMapGeneration = 0
     /// session name -> latest pane snapshot
     private(set) var panes: [String: PaneSnapshot] = [:]
 
@@ -58,6 +60,9 @@ final class TmuxControlModeClient {
         self.tmux = tmux
 
         tmux.ensureSession(name: Self.hiddenSessionName, cwd: FileManager.default.temporaryDirectory, command: nil)
+        // A control client orphaned by an earlier crashed run would otherwise
+        // stay attached forever (and can wedge the server; see recoverIfWedged).
+        tmux.killOrphanedControlClients(session: Self.hiddenSessionName)
 
         var args = ["-S", tmux.socketPath]
         if let conf = tmux.confPath { args += ["-f", conf] }
@@ -91,12 +96,12 @@ final class TmuxControlModeClient {
     }
 
     private func subscribe() {
-        // One string for all sessions: name|paneID|command|activity|title;...
+        // One string for all sessions: name|paneID|pid|command|activity|title;...
         // Title last (may contain '|'). A ';' in it just truncates the title
         // (the leftover fragment fails the field-count check); `s/;/…/` can't
         // be used, ';' separates format modifiers.
         let title = "#{?#{==:#{pane_title},#{host}},,#{pane_title}}"
-        let format = "#{S:#{session_name}|#{pane_id}|#{pane_current_command}|#{window_activity}|\(title);}"
+        let format = "#{S:#{session_name}|#{pane_id}|#{pane_pid}|#{pane_current_command}|#{window_activity}|\(title);}"
         send("refresh-client -B \(Self.subscriptionName)::\"\(format)\"")
     }
 
@@ -124,7 +129,18 @@ final class TmuxControlModeClient {
 
     private func handle(line: String) {
         if line.hasPrefix("%sessions-changed") {
-            if let tmux { windowToSession = tmux.windowSessionMap() }
+            if let tmux {
+                windowMapGeneration += 1
+                let generation = windowMapGeneration
+                Task.detached { [weak self] in
+                    let map = tmux.windowSessionMap()
+                    await MainActor.run {
+                        guard let self, generation == self.windowMapGeneration else { return }
+                        // Merge rather than replace: closed windows are pruned on %window-close.
+                        self.windowToSession.merge(map) { _, new in new }
+                    }
+                }
+            }
             onSessionsChanged?()
         } else if line.hasPrefix("%subscription-changed \(Self.subscriptionName) ") {
             // "%subscription-changed <name> $sid @wid %pid ... : <payload>"
@@ -148,13 +164,13 @@ final class TmuxControlModeClient {
         var next: [String: PaneSnapshot] = [:]
         var seenSessions: [String: Int] = [:], seenPanes: [String: Int] = [:]
         for entry in payload.split(separator: ";") {
-            let f = entry.split(separator: "|", maxSplits: 4, omittingEmptySubsequences: false)
-            guard f.count == 5, let activity = TimeInterval(f[3]) else { continue }
+            let f = entry.split(separator: "|", maxSplits: 5, omittingEmptySubsequences: false)
+            guard f.count == 6, let pid = pid_t(f[2]), let activity = TimeInterval(f[4]) else { continue }
             let session = String(f[0])
             seenSessions[session, default: 0] += 1
             seenPanes[String(f[1]), default: 0] += 1
             guard session != Self.hiddenSessionName else { continue }
-            next[session] = PaneSnapshot(paneID: String(f[1]), command: String(f[2]), activity: activity, title: String(f[4]))
+            next[session] = PaneSnapshot(paneID: String(f[1]), pid: pid, command: String(f[3]), activity: activity, title: String(f[5]))
         }
         // Titles are pane-controlled (OSC 2) and can't be escaped here, so a
         // title like "x;ao_other|%5|zsh|0|" forges entries. tmux lists each
