@@ -216,26 +216,26 @@ final class AppState {
         if let app = NSApp, !app.isActive {
             app.requestUserAttention(.informationalRequest)
         }
-        let center = UNUserNotificationCenter.current()
-        center.getNotificationSettings { settings in
-            let allowed = settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional
-            Task { @MainActor in
-                if allowed {
-                    let content = UNMutableNotificationContent()
-                    content.title = title
-                    content.body = body
-                    content.sound = nil // playAttentionSound() already rang
-                    content.userInfo = ["agentID": agentID.uuidString]
-                    let request = UNNotificationRequest(identifier: "agent-\(agentID.uuidString)", content: content, trigger: nil)
-                    center.add(request) { error in
-                        if let error { HookLog.write("system notification failed: \(error.localizedDescription)") }
-                    }
+        Task { [weak self] in
+            let center = UNUserNotificationCenter.current()
+            let status = await center.notificationSettings().authorizationStatus
+            if status == .authorized || status == .provisional {
+                let content = UNMutableNotificationContent()
+                content.title = title
+                content.body = body
+                content.sound = nil // playAttentionSound() already rang
+                content.userInfo = ["agentID": agentID.uuidString]
+                let request = UNNotificationRequest(identifier: "agent-\(agentID.uuidString)", content: content, trigger: nil)
+                do {
+                    try await center.add(request)
                     HookLog.write("system notification: \"\(title)\"")
-                } else {
-                    HookLog.write("toast (system notifications not allowed, status=\(settings.authorizationStatus.rawValue)): \"\(title)\"")
-                    ToastCenter.shared.show(title: title, body: body) { [weak self] in
-                        self?.selectAgent(id: agentID)
-                    }
+                } catch {
+                    HookLog.write("system notification failed: \(error.localizedDescription)")
+                }
+            } else {
+                HookLog.write("toast (system notifications not allowed, status=\(status.rawValue)): \"\(title)\"")
+                ToastCenter.shared.show(title: title, body: body) { [weak self] in
+                    self?.selectAgent(id: agentID)
                 }
             }
         }

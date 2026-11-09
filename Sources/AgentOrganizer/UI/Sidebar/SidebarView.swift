@@ -16,30 +16,21 @@ struct SidebarView: View {
             if !needsYou.isEmpty {
                 Section("Needs you") {
                     ForEach(needsYou) { agent in
-                        AttentionAgentRow(agent: agent, status: .waiting)
-                    }
-                }
-            }
-            let finished = appState.finishedAgents
-            if !finished.isEmpty {
-                Section("Finished") {
-                    ForEach(finished) { agent in
-                        AttentionAgentRow(agent: agent, status: .done)
+                        AttentionAgentRow(agent: agent)
                     }
                 }
             }
 
+            // Header is a plain (untagged, unselectable) row, not a section header:
+            // sidebar section headers grow a hover collapse caret that shoves the
+            // filter button left, and .collapsible(false) doesn't suppress it.
             Section {
+                FoldersHeader()
                 ForEach(visibleFolders) { folder in
                     FolderRowView(folder: folder)
                         .tag(folder.id)
                 }
-            } header: {
-                FoldersHeader()
             }
-            // The hover-only collapse caret would push the filter button left
-            // whenever the pointer enters the header.
-            .collapsible(false)
 
             if !appState.orphanSessions.isEmpty {
                 Section("Unmanaged Sessions") {
@@ -105,6 +96,8 @@ private struct FoldersHeader: View {
         let filtered = appState.store.sidebarOpenAgentsOnly
         HStack {
             Text(filtered ? "Folders with agents" : "Folders")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
             Spacer()
             if !appState.store.folders.isEmpty {
                 Button {
@@ -121,18 +114,17 @@ private struct FoldersHeader: View {
     }
 }
 
-/// One agent that needs you or finished unseen, from any folder. Click to jump to it.
+/// One agent that needs you, from any folder. Click to jump to it.
 private struct AttentionAgentRow: View {
     @Environment(AppState.self) private var appState
     let agent: Agent
-    let status: AgentStatus
 
     var body: some View {
         Button {
             appState.selectAgent(agent)
         } label: {
             HStack(spacing: 8) {
-                StatusOrb(status: status, size: 6)
+                StatusOrb(status: .waiting, size: 6)
                     .frame(width: 16)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(appState.displayTitle(for: agent))
@@ -155,7 +147,7 @@ private struct AttentionAgentRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(status == .waiting ? "Blocked on your answer — click to open" : "Finished — click to see the result")
+        .help("Blocked on your answer — click to open")
     }
 
     static func age(since: TimeInterval, now: Date) -> String {

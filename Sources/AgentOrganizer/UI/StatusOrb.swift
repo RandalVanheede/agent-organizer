@@ -4,9 +4,9 @@ import SwiftUI
 extension AgentStatus {
     var color: Color {
         switch self {
-        case .running: return .green
+        case .running: return .blue
         case .waiting: return .orange
-        case .done: return .teal
+        case .done: return .green
         case .idle: return .gray
         case .exited: return .red
         case .unknown: return .gray.opacity(0.5)
@@ -26,7 +26,7 @@ extension AgentStatus {
 }
 
 /// Status as colour *and* shape, so it reads without colour vision:
-/// running = solid dot, needs you = dot with a halo, finished = ✓,
+/// running = spinning arc, needs you = !, finished = ✓,
 /// idle = hollow ring, exited = ×, unknown = dashed ring.
 struct StatusOrb: View {
     let status: AgentStatus
@@ -43,10 +43,11 @@ struct StatusOrb: View {
     @ViewBuilder private var shape: some View {
         switch status {
         case .running:
-            Circle().fill(status.color)
+            Spinner(color: status.color, size: size)
         case .waiting:
-            Circle().fill(status.color)
-                .overlay { Circle().stroke(status.color.opacity(0.5), lineWidth: 2).frame(width: size + 4, height: size + 4) }
+            Image(systemName: "exclamationmark")
+                .font(.system(size: size + 2, weight: .heavy))
+                .foregroundStyle(status.color)
         case .done:
             Image(systemName: "checkmark")
                 .font(.system(size: size + 1, weight: .heavy))
@@ -60,5 +61,24 @@ struct StatusOrb: View {
         case .unknown:
             Circle().strokeBorder(status.color, style: StrokeStyle(lineWidth: 1, dash: [2, 1.5]))
         }
+    }
+}
+
+/// Small rotating arc. Slow (1.2 s/turn) so it reads as "working" without
+/// pulling the eye; static with Reduce Motion.
+private struct Spinner: View {
+    let color: Color
+    let size: CGFloat
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var spinning = false
+
+    var body: some View {
+        Circle()
+            .trim(from: 0, to: 0.7)
+            .stroke(color, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+            .frame(width: size + 2, height: size + 2)
+            .rotationEffect(.degrees(spinning ? 360 : 0))
+            .animation(reduceMotion ? nil : .linear(duration: 1.2).repeatForever(autoreverses: false), value: spinning)
+            .onAppear { spinning = true }
     }
 }
