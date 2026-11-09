@@ -19,6 +19,10 @@ final class Store {
     var attentionSound: String = "Glass"
     /// Sidebar filter: hide folders that have no agents (= no live tmux session).
     var sidebarOpenAgentsOnly: Bool = false
+    /// How sidebar rows show agent status (Preferences › Appearance).
+    var sidebarStatusStyle: SidebarStatusStyle = .icons
+    /// Sliding segment under running tabs; off = static line.
+    var animateRunningTabs: Bool = true
     /// tmux sessions of Claude agents mid-turn (between UserPromptSubmit and
     /// Stop), so status stays right across an app restart.
     var activeTurnSessions: Set<String> = []
@@ -49,6 +53,8 @@ final class Store {
         var activeAgentByFolder: [String: String]?
         var attentionSound: String?
         var sidebarOpenAgentsOnly: Bool?
+        var sidebarStatusStyle: SidebarStatusStyle?
+        var animateRunningTabs: Bool?
         var activeTurnSessions: [String]?
         var shortcutOverrides: [String: KeyCombo]?
     }
@@ -66,6 +72,8 @@ final class Store {
         activeAgentByFolder = state.activeAgentByFolder ?? [:]
         attentionSound = state.attentionSound ?? "Glass"
         sidebarOpenAgentsOnly = state.sidebarOpenAgentsOnly ?? false
+        sidebarStatusStyle = state.sidebarStatusStyle ?? .icons
+        animateRunningTabs = state.animateRunningTabs ?? true
         activeTurnSessions = Set(state.activeTurnSessions ?? [])
         shortcutOverrides = state.shortcutOverrides ?? [:]
     }
@@ -81,6 +89,8 @@ final class Store {
             activeAgentByFolder: activeAgentByFolder,
             attentionSound: attentionSound,
             sidebarOpenAgentsOnly: sidebarOpenAgentsOnly,
+            sidebarStatusStyle: sidebarStatusStyle,
+            animateRunningTabs: animateRunningTabs,
             activeTurnSessions: activeTurnSessions.sorted(),
             shortcutOverrides: shortcutOverrides
         )
@@ -294,4 +304,10 @@ final class Store {
     private func storeShortcut(_ action: ShortcutAction, _ combo: KeyCombo) {
         shortcutOverrides[action.rawValue] = combo == action.defaultCombo ? nil : combo
     }
+}
+
+enum SidebarStatusStyle: String, Codable, CaseIterable {
+    case icons, colors, both
+    var showsIcon: Bool { self != .colors }
+    var showsColor: Bool { self != .icons }
 }

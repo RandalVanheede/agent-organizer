@@ -17,6 +17,7 @@ struct SidebarView: View {
                 Section("Needs you") {
                     ForEach(needsYou) { agent in
                         AttentionAgentRow(agent: agent)
+                            .statusTint(.waiting, style: appState.store.sidebarStatusStyle)
                     }
                 }
             }
@@ -29,6 +30,7 @@ struct SidebarView: View {
                 ForEach(visibleFolders) { folder in
                     FolderRowView(folder: folder)
                         .tag(folder.id)
+                        .statusTint(appState.folderStatus(folder.id), style: appState.store.sidebarStatusStyle)
                 }
             }
 
@@ -126,6 +128,7 @@ private struct AttentionAgentRow: View {
             HStack(spacing: 8) {
                 StatusOrb(status: .waiting, size: 6)
                     .frame(width: 16)
+                    .opacity(appState.store.sidebarStatusStyle.showsIcon ? 1 : 0)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(appState.displayTitle(for: agent))
                         .lineLimit(1)

@@ -171,7 +171,10 @@ private struct AgentTabView: View {
                     .fill(isActive ? Color.accentColor.opacity(0.18) : (isHovering ? Color.primary.opacity(0.06) : .clear))
             )
             .overlay(alignment: .bottom) {
-                if status == .running { RunningIndicator() }
+                if status == .running {
+                    let animated = appState.store.animateRunningTabs
+                    RunningIndicator(animated: animated).id(animated) // fresh onAppear when toggled
+                }
             }
             .contentShape(Rectangle())
         }
@@ -207,14 +210,35 @@ private struct AgentTabView: View {
 
 }
 
-/// A thin line under a tab whose tool is working. Static on purpose: a
-/// moving segment pulled the eye away from the terminal.
+/// A line under a tab whose tool is working: a short segment sliding back
+/// and forth (Preferences › Appearance), or static when that's off or under
+/// Reduce Motion.
 private struct RunningIndicator: View {
+    let animated: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var atEnd = false
+
     var body: some View {
-        Capsule()
-            .fill(AgentStatus.running.color.opacity(0.7))
-            .frame(height: 2)
-            .padding(.horizontal, 8)
-            .accessibilityHidden(true)
+        let moving = animated && !reduceMotion
+        GeometryReader { geo in
+            let segment = geo.size.width * 0.3
+            ZStack(alignment: .leading) {
+                Capsule().fill(AgentStatus.running.color.opacity(moving ? 0.25 : 0.7))
+                if moving {
+                    Capsule()
+                        .fill(AgentStatus.running.color)
+                        .frame(width: segment)
+                        .offset(x: atEnd ? geo.size.width - segment : 0)
+                }
+            }
+        }
+        .frame(height: 2)
+        .padding(.horizontal, 8)
+        .clipped()
+        .accessibilityHidden(true)
+        .onAppear {
+            guard moving else { return }
+            withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) { atEnd = true }
+        }
     }
 }

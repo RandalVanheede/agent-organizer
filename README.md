@@ -32,7 +32,7 @@ everything is exactly where you left it.
 - **Folders as vertical tabs.** Git repos, containers of repos (with per-repo branch badges), or plain directories.
 - **Agents as horizontal tabs.** Claude Code, OpenCode, a login shell, or your own custom presets (with resume commands).
 - **Sessions survive the app.** Each agent is a tmux session on the app's *own* socket — your personal tmux is never touched.
-- **Live status, no polling.** A status icon per agent (blue spinner running, orange ! needs you, green ✓ finished, grey idle, red × exited), driven by tmux control-mode events:
+- **Live status, no polling.** A status icon per agent (blue spinner running, orange ! needs you, green ✓ finished, grey idle, red × exited), optionally as sidebar row colours, driven by tmux control-mode events:
   `running` · `waiting for input` · `idle` · `exited`.
 - **Knows when Claude needs you.** Claude Code hooks flag the tab, bounce the Dock, badge the icon and ring a sound — silent
   while you're already looking at that tab. Tools without hooks (OpenCode, custom) get the same via output-quiet detection.

@@ -26,7 +26,7 @@ struct FolderRowView: View {
                 }
             }
             Spacer(minLength: 4)
-            if let status = appState.folderStatus(folder.id) {
+            if appState.store.sidebarStatusStyle.showsIcon, let status = appState.folderStatus(folder.id) {
                 StatusOrb(status: status, size: 6)
             }
             if agentCount > 0 {

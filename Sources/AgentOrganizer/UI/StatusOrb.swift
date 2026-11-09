@@ -82,3 +82,19 @@ private struct Spinner: View {
             .onAppear { spinning = true }
     }
 }
+
+extension View {
+    /// Faint status fill behind a sidebar row (Colours / Both style). Idle,
+    /// unknown and nil stay plain; the native selection draws over it.
+    func statusTint(_ status: AgentStatus?, style: SidebarStatusStyle) -> some View {
+        let tinted: AgentStatus? = switch status {
+        case .running, .waiting, .done, .exited: status
+        default: nil
+        }
+        return listRowBackground(
+            (style.showsColor ? tinted : nil).map {
+                RoundedRectangle(cornerRadius: 5).fill($0.color.opacity(0.15)).padding(.horizontal, 10)
+            }
+        )
+    }
+}

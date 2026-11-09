@@ -48,7 +48,7 @@ There are no automated tests; verification has been done by:
 
 **New Agent UI.** Presented from a single `.sheet(item:)` in `MainSplitView`, driven by `AppState.newAgentPopoverFolderID`. Do not attach per-row `.popover`s inside `List` section headers — that was the first real bug (mis-anchored, failed to present once a row was selected).
 
-**Sidebar Folders header** is a plain untagged row inside a headerless `Section`, not a section header: sidebar section headers show a hover collapse caret (`.collapsible(false)` didn't suppress it) that shoved the filter button left.
+**Sidebar Folders header** is a plain untagged row inside a headerless `Section`, not a section header: sidebar section headers show a hover collapse caret (`.collapsible(false)` didn't suppress it) that shoved the filter button left. Status tints on sidebar rows (`statusTint`, Colours/Both style) are `listRowBackground`; the native selection highlight intentionally covers them.
 
 **⌘W.** Means Kill Agent (default; rebindable like every shortcut via `ShortcutAction`/`Store.shortcut(_:)`, Preferences › Shortcuts). A local `NSEvent` key-down monitor in `AppDelegate` swallows the Kill Agent combo before menu/window dispatch (ignored while `ShortcutRecorder.isRecording`) and kills the selected agent (no-op with none; Settings window still closes). Don't use an `NSApplication` subclass for this: the SwiftUI lifecycle ignores `NSPrincipalClass` (NSApp is SwiftUI's `AppKitApplication`), which is why the old `AOApplication` approach never worked. ⇧⌘W is an explicit "Close Window" command.
 

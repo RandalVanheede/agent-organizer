@@ -7,6 +7,8 @@ struct PreferencesView: View {
         TabView {
             GeneralPreferencesView()
                 .tabItem { Label("General", systemImage: "gearshape") }
+            AppearancePreferencesView()
+                .tabItem { Label("Appearance", systemImage: "paintpalette") }
             PresetsPreferencesView()
                 .tabItem { Label("Tools", systemImage: "terminal") }
             ShortcutsPreferencesView()
@@ -318,5 +320,38 @@ struct ShortcutRecorder: View {
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
         Self.isRecording = false
+    }
+}
+
+private struct AppearancePreferencesView: View {
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        let store = appState.store
+        Form {
+            Section("Sidebar") {
+                Picker("Show agent status as", selection: Binding(
+                    get: { store.sidebarStatusStyle },
+                    set: { store.sidebarStatusStyle = $0; store.save() }
+                )) {
+                    Text("Icons").tag(SidebarStatusStyle.icons)
+                    Text("Colours").tag(SidebarStatusStyle.colors)
+                    Text("Both").tag(SidebarStatusStyle.both)
+                }
+                Text("Colours tint folder and \u{201C}Needs you\u{201D} rows: blue running, orange needs you, green finished, red ended. The selected row keeps the normal highlight.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section("Agent tabs") {
+                Toggle("Animate running tabs", isOn: Binding(
+                    get: { store.animateRunningTabs },
+                    set: { store.animateRunningTabs = $0; store.save() }
+                ))
+                Text("A segment slides along the bottom of a tab while its tool works. Off, or with Reduce Motion, it\u{2019}s a static line.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
     }
 }

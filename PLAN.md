@@ -212,7 +212,8 @@ Preferences › Shortcuts rebinds every app command (Add Folder, New Agent/Shell
 
 ### Attention & navigation pass
 - **Needs you vs Finished**: `waiting` now means blocked on the user (permission prompt / question); a quiet tool whose turn ended is `done` (green ✓). Sidebar section "Needs you" (until answered), oldest first; the "Finished" section was later removed (user feedback: kept re-appearing). ⌘J (`nextWaitingAgent`, "Next Agent to Check") cycles needs-you then finished.
-- **Status shapes**: running = slow blue spinning arc (static with Reduce Motion), waiting = orange !, done = green ✓, idle = hollow ring, exited = ×, unknown = dashed ring — readable without colour. Running tabs get a static 2 pt blue line (a sliding segment was tried and found distracting).
+- **Status shapes**: running = slow blue spinning arc (static with Reduce Motion), waiting = orange !, done = green ✓, idle = hollow ring, exited = ×, unknown = dashed ring — readable without colour. Running tabs get a 2 pt blue line under them: a sliding segment by default, static when "Animate running tabs" is off (Preferences › Appearance) or under Reduce Motion.
+- **Sidebar status style** (Preferences › Appearance, `Store.sidebarStatusStyle`): Icons (default) / Colours / Both. Colours = faint 15 % `listRowBackground` tint on folder and "Needs you" rows (running/waiting/done/exited only); native selection is kept and draws over it.
 - **Tab subtitle** shows path/branch only; CPU/memory moved to the tooltip and appear on the tab (orange) only when ≥ 50 % CPU or ≥ 1 GB.
 - **Undoable kill** (8 s toast) and a **Session ended** card (Restart / Close Tab) for dead panes.
 - **Filter** ("folders with agents only") is a toggle in the Folders section header; the selected folder always stays listed.
