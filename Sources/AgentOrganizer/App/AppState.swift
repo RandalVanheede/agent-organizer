@@ -47,6 +47,8 @@ final class AppState {
     /// event (near-instant); `startStatusPolling` also runs a slow fallback
     /// poll in case the control connection ever drops silently.
     var agentStatuses: [Agent.ID: AgentStatus] = [:]
+    /// Unix seconds when each agent entered its current status (sidebar Agents panel ages).
+    var statusSince: [Agent.ID: TimeInterval] = [:]
     /// tmux session name -> latest live pane title (from control mode window
     /// renames), overridden by a user-set `Agent.title` when present.
     var liveTitles: [String: String] = [:]
@@ -478,6 +480,7 @@ final class AppState {
             let old = agentStatuses[agent.id]
             if old != new {
                 agentStatuses[agent.id] = new
+                statusSince[agent.id] = Date().timeIntervalSince1970
                 changed = true
             }
             // Quiet-after-running heuristic (for persistent tools without

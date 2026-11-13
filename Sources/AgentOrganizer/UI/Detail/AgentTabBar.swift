@@ -6,11 +6,22 @@ import SwiftUI
 struct AgentTabBar: View {
     @Environment(AppState.self) private var appState
     let folder: Folder
+    @Binding var columnVisibility: NavigationSplitViewVisibility
 
     private var agents: [Agent] { appState.store.agents(in: folder.id) }
 
     var body: some View {
         HStack(spacing: 0) {
+            if columnVisibility == .detailOnly {
+                // Sidebar hidden: this row is the window's top-left, so clear the traffic lights.
+                SidebarToggleButton(columnVisibility: $columnVisibility)
+                    .padding(.leading, 76)
+                FolderSwitcherMenu()
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .padding(.horizontal, 6)
+                Divider().frame(height: 18)
+            }
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 2) {
                     ForEach(agents) { agent in
@@ -28,10 +39,27 @@ struct AgentTabBar: View {
             .padding(.trailing, 8)
         }
         .frame(height: 34)
-        .background(.bar)
-        .overlay(alignment: .bottom) {
-            Divider()
+        .background(Chrome.background)
+        .overlay(alignment: .bottom) { Chrome.hairline.frame(height: 1) }
+    }
+}
+
+/// Shows / hides the sidebar (the title bar, and its built-in toggle, is gone).
+struct SidebarToggleButton: View {
+    @Binding var columnVisibility: NavigationSplitViewVisibility
+
+    var body: some View {
+        Button {
+            withAnimation { columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly }
+        } label: {
+            Image(systemName: "sidebar.left")
+                .foregroundStyle(.secondary)
+                .frame(width: 24, height: 24)
+                .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .help(columnVisibility == .detailOnly ? "Show Sidebar" : "Hide Sidebar")
+        .accessibilityLabel(columnVisibility == .detailOnly ? "Show Sidebar" : "Hide Sidebar")
     }
 }
 
@@ -84,7 +112,7 @@ private struct NewAgentButton: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.06)))
+        .foregroundStyle(.secondary)
         .contentShape(Rectangle())
     }
 }
@@ -164,12 +192,13 @@ private struct AgentTabView: View {
             }
             .padding(.leading, 10)
             .padding(.trailing, 6)
-            .padding(.vertical, 4)
-            .frame(minWidth: 90, maxWidth: 240, minHeight: 28)
+            .padding(.vertical, 3)
+            .frame(minWidth: 90, maxWidth: 240, minHeight: 26)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(isActive ? Color.accentColor.opacity(0.18) : (isHovering ? Color.primary.opacity(0.06) : .clear))
+                    .fill(isActive ? Color.primary.opacity(0.08) : (isHovering ? Color.primary.opacity(0.05) : .clear))
             )
+            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(isActive ? Chrome.cardBorder : .clear))
             .overlay(alignment: .bottom) {
                 if status == .running {
                     let animated = appState.store.animateRunningTabs

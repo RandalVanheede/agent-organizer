@@ -7,17 +7,11 @@ struct MainSplitView: View {
     var body: some View {
         @Bindable var appState = appState
         NavigationSplitView(columnVisibility: $columnVisibility) {
-            SidebarView()
+            SidebarView(columnVisibility: $columnVisibility)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 400)
+                .toolbar(removing: .sidebarToggle)
         } detail: {
-            DetailView()
-                .toolbar {
-                    if columnVisibility == .detailOnly {
-                        ToolbarItem(placement: .navigation) {
-                            FolderSwitcherMenu()
-                        }
-                    }
-                }
+            DetailView(columnVisibility: $columnVisibility)
         }
         .sheet(item: Binding(
             get: { appState.newAgentPopoverFolderID.flatMap { appState.store.folder($0) } },

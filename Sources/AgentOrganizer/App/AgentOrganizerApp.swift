@@ -16,6 +16,7 @@ struct AgentOrganizerApp: App {
                     appState.startStatusPolling()
                 }
         }
+        .windowStyle(.hiddenTitleBar) // columns draw their own top row beside the traffic lights
         .commands {
             AppCommands(appState: appState, updater: updater)
         }

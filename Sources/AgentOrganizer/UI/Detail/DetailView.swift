@@ -4,11 +4,12 @@ import SwiftUI
 /// agent's terminal below (optionally split with a second one).
 struct DetailView: View {
     @Environment(AppState.self) private var appState
+    @Binding var columnVisibility: NavigationSplitViewVisibility
 
     var body: some View {
         if let folder = appState.selectedFolder, let tmux = appState.tmux {
             VStack(spacing: 0) {
-                AgentTabBar(folder: folder)
+                AgentTabBar(folder: folder, columnVisibility: $columnVisibility)
                 if let agent = appState.selectedAgent {
                     if let secondary = appState.splitAgent {
                         HSplitView {
@@ -21,7 +22,10 @@ struct DetailView: View {
                 } else {
                     NoAgentsPlaceholder(folder: folder)
                 }
+                StatusBar(folder: folder)
             }
+            .background(Chrome.background)
+            .ignoresSafeArea(.container, edges: .top) // tab bar sits in the (hidden) title bar row
             .navigationTitle(folder.displayName)
             .navigationSubtitle(appState.selectedAgent.map { $0.title ?? appState.store.preset(for: $0.presetID).name } ?? "")
         } else {
@@ -38,20 +42,92 @@ private struct AgentPane: View {
     let folder: Folder
     let tmux: TmuxController
 
+    private var cwd: URL { agent.resolvedCwd(folderPath: folder.path) }
+
     var body: some View {
-        TerminalHostView(
-            agent: agent,
-            cwd: agent.resolvedCwd(folderPath: folder.path),
-            tmux: tmux,
-            cache: appState.cache,
-            fontSize: appState.store.terminalFontSize,
-            remoteHost: folder.host
-        )
-        .id("\(agent.id)-\(appState.terminalEpochs[agent.id] ?? 0)")
-        .overlay {
-            if appState.agentStatuses[agent.id] == .exited {
-                SessionEndedView(agent: agent)
+        // Card: header + terminal inset by padding (not clipped: clipping an
+        // NSView-backed terminal to a rounded shape is unreliable).
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: appState.store.preset(for: agent.presetID).icon)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(appState.displayTitle(for: agent))
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                Text(folder.isRemote ? cwd.path : (cwd.path as NSString).abbreviatingWithTildeInPath)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+                Spacer(minLength: 4)
+                StatusOrb(status: appState.agentStatuses[agent.id] ?? .unknown)
             }
+            .padding(.horizontal, 10)
+            .frame(height: 26)
+            TerminalHostView(
+                agent: agent,
+                cwd: cwd,
+                tmux: tmux,
+                cache: appState.cache,
+                fontSize: appState.store.terminalFontSize,
+                remoteHost: folder.host
+            )
+            .id("\(agent.id)-\(appState.terminalEpochs[agent.id] ?? 0)")
+            .overlay {
+                if appState.agentStatuses[agent.id] == .exited {
+                    SessionEndedView(agent: agent)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.bottom, 6)
+        }
+        .background(Chrome.cardBackground, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(
+            appState.selectedAgent?.id == agent.id ? Color.accentColor.opacity(0.7) : Chrome.cardBorder))
+        .padding(8)
+    }
+}
+
+/// Footer: where you are (host · branch · agents) and the Quick Open hint.
+private struct StatusBar: View {
+    @Environment(AppState.self) private var appState
+    let folder: Folder
+
+    private var branch: String? {
+        guard let agent = appState.selectedAgent, !agent.relativeCwd.isEmpty else { return folder.rootBranch }
+        return folder.subRepos.first { $0.relativePath == agent.relativeCwd }?.branch
+    }
+
+    var body: some View {
+        let count = appState.store.agents(in: folder.id).count
+        HStack(spacing: 14) {
+            Label(folder.host ?? "This Mac", systemImage: folder.isRemote ? "server.rack" : "desktopcomputer")
+            if let branch {
+                Label(branch, systemImage: "arrow.triangle.branch")
+            }
+            Label(count == 1 ? "1 agent" : "\(count) agents", systemImage: "circle.fill")
+                .labelStyle(DotLabelStyle())
+            Spacer()
+            if let shortcut = appState.store.shortcut(.quickOpen) {
+                Text("\(shortcut.display) open folder")
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .padding(.horizontal, 12)
+        .frame(height: 24)
+        .overlay(alignment: .top) { Chrome.hairline.frame(height: 1) }
+    }
+}
+
+/// Tiny dot instead of a full-size SF Symbol for the agent count.
+private struct DotLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 5) {
+            configuration.icon.font(.system(size: 5))
+            configuration.title
         }
     }
 }

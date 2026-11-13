@@ -25,6 +25,8 @@ final class TerminalCache {
         view.sessionName = agent.tmuxSession
         view.store = store
         view.font = .monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        view.lineSpacing = 1.12 // Herdr-like breathing room between lines
+        view.applyTheme(for: NSApp.effectiveAppearance)
         let delegate = TerminalAttachDelegate()
         view.processDelegate = delegate
         delegates[agent.id] = delegate
@@ -95,6 +97,43 @@ final class AOTerminalView: LocalProcessTerminalView {
                 DispatchQueue.main.async { RemoteSession.handleOpenRequest(bytes, host: host, session: session) }
             }
         }
+    }
+
+    /// SwiftTerm bakes colours to fixed values, so re-apply on light/dark switches.
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyTheme(for: effectiveAppearance)
+    }
+
+    /// Herdr-like look: soft grey (dark) / white (light) background matching
+    /// the card, plus an ANSI palette that stays readable on each.
+    func applyTheme(for appearance: NSAppearance) {
+        let dark = Chrome.isDark(appearance)
+        let fg = dark ? Self.hex(0xD8DADF) : Self.hex(0x1F2328)
+        nativeBackgroundColor = Chrome.terminalBackground(for: appearance)
+        nativeForegroundColor = fg
+        caretColor = fg
+        selectedTextBackgroundColor = dark ? Self.hex(0x3A4250) : Self.hex(0xC8D7F2)
+        installColors(dark ? Self.darkPalette : Self.lightPalette)
+    }
+
+    private static func hex(_ rgb: Int) -> NSColor {
+        NSColor(srgbRed: CGFloat(rgb >> 16 & 0xFF) / 255, green: CGFloat(rgb >> 8 & 0xFF) / 255,
+                blue: CGFloat(rgb & 0xFF) / 255, alpha: 1)
+    }
+
+    /// black, red, green, yellow, blue, magenta, cyan, white; then the bright set.
+    private static let darkPalette = palette([
+        0x3B3E44, 0xE06C75, 0x98C379, 0xE5C07B, 0x7AA2F7, 0xC678DD, 0x56B6C2, 0xB4B8C0,
+        0x5C6370, 0xF0838B, 0xAAD48C, 0xF0CE8F, 0x93B5FF, 0xD48FEA, 0x6CCAD5, 0xEEF0F3,
+    ])
+    private static let lightPalette = palette([
+        0x2B2D31, 0xC0392B, 0x2E8B57, 0xB58900, 0x5A73E6, 0xA347BA, 0x1F8A99, 0x8A8F98,
+        0x6B7079, 0xD9534F, 0x3FA66B, 0xC9A227, 0x7B8FF0, 0xB55FCC, 0x2AA1B3, 0xB8BCC4,
+    ])
+
+    private static func palette(_ rgb: [Int]) -> [SwiftTerm.Color] {
+        rgb.map { SwiftTerm.Color(red8: UInt16($0 >> 16 & 0xFF), green8: UInt16($0 >> 8 & 0xFF), blue8: UInt16($0 & 0xFF)) }
     }
 
     /// Remote tabs: the remote tool can't read the Mac clipboard, so copied

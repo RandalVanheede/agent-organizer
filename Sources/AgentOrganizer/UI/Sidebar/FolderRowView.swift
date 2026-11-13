@@ -12,19 +12,12 @@ struct FolderRowView: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: kindIcon)
-                .foregroundStyle(.secondary)
-                .frame(width: 16)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(folder.displayName)
-                    .lineLimit(1)
-                if let branch = folder.rootBranch {
-                    Text(branch)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
+            FolderAvatar(name: folder.displayName)
+            // Name and branch on one line, branch muted (Herdr-style).
+            (Text(folder.displayName).fontWeight(.semibold)
+             + Text(folder.rootBranch.map { "  " + $0 } ?? "").font(.caption).foregroundColor(.secondary))
+                .lineLimit(1)
+                .help(folder.isRemote ? "\(folder.host ?? "") — \(kindLabel)" : kindLabel)
             Spacer(minLength: 4)
             if appState.store.sidebarStatusStyle.showsIcon, let status = appState.folderStatus(folder.id) {
                 StatusOrb(status: status, size: 6)
@@ -51,12 +44,11 @@ struct FolderRowView: View {
         }
     }
 
-    private var kindIcon: String {
-        if folder.isRemote { return "network" }
+    private var kindLabel: String {
         switch folder.kind {
-        case .repo: return "folder.fill.badge.gearshape"
-        case .container: return "folder.fill"
-        case .plain: return "folder"
+        case .repo: return "Git repository"
+        case .container: return "Folder with \(folder.subRepos.count) repositories"
+        case .plain: return "Folder"
         }
     }
 }
