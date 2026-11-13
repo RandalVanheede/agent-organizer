@@ -13,6 +13,7 @@ struct AgentOrganizerApp: App {
                 .frame(minWidth: 900, minHeight: 560)
                 .onAppear {
                     appDelegate.appState = appState
+                    appState.store.appearance.apply()
                     appState.startStatusPolling()
                 }
         }

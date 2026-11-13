@@ -23,6 +23,8 @@ final class Store {
     var sidebarStatusStyle: SidebarStatusStyle = .icons
     /// Sliding segment under running tabs; off = static line.
     var animateRunningTabs: Bool = true
+    /// Follow system / force dark / force light (Preferences › Appearance).
+    var appearance: AppAppearance = .system
     /// tmux sessions of Claude agents mid-turn (between UserPromptSubmit and
     /// Stop), so status stays right across an app restart.
     var activeTurnSessions: Set<String> = []
@@ -55,6 +57,7 @@ final class Store {
         var sidebarOpenAgentsOnly: Bool?
         var sidebarStatusStyle: SidebarStatusStyle?
         var animateRunningTabs: Bool?
+        var appearance: AppAppearance?
         var activeTurnSessions: [String]?
         var shortcutOverrides: [String: KeyCombo]?
     }
@@ -74,6 +77,7 @@ final class Store {
         sidebarOpenAgentsOnly = state.sidebarOpenAgentsOnly ?? false
         sidebarStatusStyle = state.sidebarStatusStyle ?? .icons
         animateRunningTabs = state.animateRunningTabs ?? true
+        appearance = state.appearance ?? .system
         activeTurnSessions = Set(state.activeTurnSessions ?? [])
         shortcutOverrides = state.shortcutOverrides ?? [:]
     }
@@ -91,6 +95,7 @@ final class Store {
             sidebarOpenAgentsOnly: sidebarOpenAgentsOnly,
             sidebarStatusStyle: sidebarStatusStyle,
             animateRunningTabs: animateRunningTabs,
+            appearance: appearance,
             activeTurnSessions: activeTurnSessions.sorted(),
             shortcutOverrides: shortcutOverrides
         )
@@ -304,6 +309,10 @@ final class Store {
     private func storeShortcut(_ action: ShortcutAction, _ combo: KeyCombo) {
         shortcutOverrides[action.rawValue] = combo == action.defaultCombo ? nil : combo
     }
+}
+
+enum AppAppearance: String, Codable, CaseIterable {
+    case system, dark, light
 }
 
 enum SidebarStatusStyle: String, Codable, CaseIterable {

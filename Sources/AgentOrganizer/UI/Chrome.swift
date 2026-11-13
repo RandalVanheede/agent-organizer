@@ -3,6 +3,17 @@ import SwiftUI
 /// One flat surface for sidebar, tab bar, status bar *and* the terminal
 /// (`AOTerminalView` paints the same colour), so the window reads as one
 /// piece. Soft grey in dark mode rather than SwiftTerm's pure-black default.
+extension AppAppearance {
+    /// Applied app-wide; terminals re-theme via `viewDidChangeEffectiveAppearance`.
+    func apply() {
+        NSApp.appearance = switch self {
+        case .system: nil
+        case .dark: NSAppearance(named: .darkAqua)
+        case .light: NSAppearance(named: .aqua)
+        }
+    }
+}
+
 enum Chrome {
     static func isDark(_ appearance: NSAppearance) -> Bool {
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua

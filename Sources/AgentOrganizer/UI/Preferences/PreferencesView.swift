@@ -329,6 +329,17 @@ private struct AppearancePreferencesView: View {
     var body: some View {
         let store = appState.store
         Form {
+            Section("Window") {
+                Picker("Appearance", selection: Binding(
+                    get: { store.appearance },
+                    set: { store.appearance = $0; store.save(); $0.apply() }
+                )) {
+                    Text("Follow System").tag(AppAppearance.system)
+                    Text("Dark").tag(AppAppearance.dark)
+                    Text("Light").tag(AppAppearance.light)
+                }
+                .pickerStyle(.segmented)
+            }
             Section("Sidebar") {
                 Picker("Show agent status as", selection: Binding(
                     get: { store.sidebarStatusStyle },
@@ -338,7 +349,7 @@ private struct AppearancePreferencesView: View {
                     Text("Colours").tag(SidebarStatusStyle.colors)
                     Text("Both").tag(SidebarStatusStyle.both)
                 }
-                Text("Colours tint folder and \u{201C}Needs you\u{201D} rows: blue running, orange needs you, green finished, red ended. The selected row keeps the normal highlight.")
+                Text("Colours tint folder and Agents panel rows: blue running, orange needs you, green finished, red ended. The selected row keeps the normal highlight.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
