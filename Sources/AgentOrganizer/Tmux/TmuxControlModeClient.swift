@@ -33,7 +33,7 @@ struct PaneSnapshot: Equatable {
 final class TmuxControlModeClient {
     /// Sessions named with this prefix are internal plumbing and must never
     /// be shown to the user as agents or orphans.
-    static let hiddenSessionName = "__ao_control"
+    nonisolated static let hiddenSessionName = "__ao_control"
     private static let subscriptionName = "aostatus"
 
     private let process = Process()
@@ -51,6 +51,8 @@ final class TmuxControlModeClient {
     var onSessionsChanged: (() -> Void)?
     var onTitleChanged: ((_ sessionName: String, _ title: String) -> Void)?
     var onPanesChanged: (() -> Void)?
+    /// The client died on its own (server shut down); not called after `stop()`.
+    var onEnded: (() -> Void)?
 
     var isRunning: Bool { started && process.isRunning }
 
@@ -84,6 +86,21 @@ final class TmuxControlModeClient {
             let data = handle.availableData
             guard !data.isEmpty else { return }
             Task { @MainActor in self?.consume(data) }
+        }
+
+        // This client ends with the server ("[server exited]" in every tab).
+        let socket = tmux.socketPath
+        process.terminationHandler = { [weak self] p in
+            let sockExists = FileManager.default.fileExists(atPath: socket)
+            HookLog.write("control client ended status=\(p.terminationStatus) reason=\(p.terminationReason.rawValue) socketExists=\(sockExists)")
+            Task { @MainActor in
+                guard let self, self.started else { return } // stop() was ours
+                self.started = false
+                // Leaked control clients would keep the dying server from
+                // exiting (wedged: refuses every connection).
+                self.tmux?.killOrphanedControlClients(session: Self.hiddenSessionName)
+                self.onEnded?()
+            }
         }
 
         do {

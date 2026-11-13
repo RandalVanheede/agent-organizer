@@ -23,7 +23,7 @@ final class AppState {
     private(set) var tmux: TmuxController?
     let cache = TerminalCache()
     let resourceMonitor = ResourceMonitor()
-    private let controlClient = TmuxControlModeClient()
+    private var controlClient = TmuxControlModeClient()
     private let watcher = FolderWatcher()
     private let hookWatcher = HookEventWatcher()
 
@@ -369,6 +369,15 @@ final class AppState {
             let titles = controlClient.panes.filter { !Self.shellCommands.contains($0.value.command) }.mapValues(\.title)
             if titles != paneTitles { paneTitles = titles }
             recomputeStatuses()
+        }
+        // Server shut down under us: once it's gone, reconnect with a fresh
+        // client (a Process can't be re-run) so live status keeps working.
+        controlClient.onEnded = { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                guard let self else { return }
+                self.controlClient = TmuxControlModeClient()
+                self.recheckTmux()
+            }
         }
     }
 

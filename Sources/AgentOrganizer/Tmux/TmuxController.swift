@@ -69,8 +69,15 @@ final class TmuxController: Sendable {
             return status != 0 && output.contains("server exited unexpectedly")
         }
         guard wedged() else { return false }
-        Thread.sleep(forTimeInterval: 0.3)
-        guard wedged() else { return false }
+        // Usually enough on its own: the server finishes exiting once they're gone.
+        killOrphanedControlClients(session: TmuxControlModeClient.hiddenSessionName)
+        // Three checks over ~2 s: the pkill below also matches the server's own
+        // argv, so a false positive kills every agent at once.
+        for delay in [0.3, 1.5] {
+            Thread.sleep(forTimeInterval: delay)
+            guard wedged() else { return false }
+        }
+        HookLog.write("recoverIfWedged: server wedged 3x, killing every process on our socket")
         Self.exec("/usr/bin/pkill", ["-f", "--", "-S " + NSRegularExpression.escapedPattern(for: socketPath) + "( |$)"])
         Thread.sleep(forTimeInterval: 0.3)
         return true
@@ -79,21 +86,12 @@ final class TmuxController: Sendable {
     /// Terminates control-mode clients on `session` whose app is gone (they
     /// were reparented to launchd) — left behind when an earlier run died.
     /// A live app instance's client is left alone.
+    /// Matches on the process table, not `list-clients`, so it also works on
+    /// a wedged server that refuses connections.
     func killOrphanedControlClients(session: String) {
-        let (status, output) = run(["list-clients", "-t", session, "-F", "#{client_pid} #{client_control_mode}"])
-        guard status == 0 else { return }
-        for line in output.split(separator: "\n") {
-            let f = line.split(separator: " ")
-            guard f.count == 2, f[1] == "1", let pid = pid_t(f[0]), Self.parentPID(of: pid) == 1 else { continue }
-            kill(pid, SIGTERM)
-        }
-    }
-
-    private static func parentPID(of pid: pid_t) -> pid_t? {
-        var info = proc_bsdinfo()
-        let size = Int32(MemoryLayout<proc_bsdinfo>.stride)
-        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
-        return pid_t(info.pbi_ppid)
+        let pattern = "-S " + NSRegularExpression.escapedPattern(for: socketPath)
+            + " .*-C attach-session -t " + NSRegularExpression.escapedPattern(for: session) + "$"
+        Self.exec("/usr/bin/pkill", ["-P", "1", "-f", "--", pattern])
     }
 
     func sessionExists(_ name: String) -> Bool {
