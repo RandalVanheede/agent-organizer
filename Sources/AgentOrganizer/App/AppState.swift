@@ -133,6 +133,10 @@ final class AppState {
         #if DEBUG
         QuickOpenRanking.selfCheck()
         #endif
+        // Bundled fonts (JetBrains Mono, OFL), app-only: before any terminal or font list is built.
+        if let fonts = Bundle.main.urls(forResourcesWithExtension: "ttf", subdirectory: "fonts") {
+            CTFontManagerRegisterFontURLs(fonts as CFArray, .process, true, nil)
+        }
         cache.store = store
         tmux = TmuxController()
         tmux?.recoverIfWedged()
@@ -358,6 +362,7 @@ final class AppState {
     private func wireControlClient() {
         guard let tmux else { return }
         controlClient.start(tmux: tmux)
+        applyTmuxSettings()
         controlClient.onSessionsChanged = { [weak self] in
             self?.refreshStatuses()
         }
@@ -912,7 +917,23 @@ final class AppState {
 
     func setTerminalFontSize(_ size: Double) {
         store.setTerminalFontSize(size)
-        cache.applyFontSize(store.terminalFontSize)
+        cache.applySettings()
+    }
+
+    /// Saves a Terminal preference and pushes it to every open terminal.
+    func updateTerminalSettings(_ change: (Store) -> Void) {
+        change(store)
+        store.save()
+        cache.applySettings()
+    }
+
+    /// tmux-side preferences: scrollback for new panes, then the user's own
+    /// conf (re-sourced each launch so edits apply without killing agents).
+    func applyTmuxSettings() {
+        guard let tmux else { return }
+        tmux.setGlobalOption("history-limit", String(store.scrollbackLines))
+        let userConf = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/agent-organizer/tmux.conf")
+        if FileManager.default.fileExists(atPath: userConf.path) { tmux.sourceFile(userConf.path) }
     }
 
     enum NotificationKind { case blocked, idleReminder, ignore }

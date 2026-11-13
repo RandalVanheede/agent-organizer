@@ -11,6 +11,15 @@ final class Store {
     var presets: [AgentPreset] = AgentPreset.defaults
     var killAgentsOnQuit: Bool = false
     var terminalFontSize: Double = 13
+    /// Font family for terminals; nil = the system monospaced font.
+    var terminalFontFamily: String?
+    var terminalLineSpacing: Double = 1.12
+    /// SwiftTerm `CursorStyle.tagName`.
+    var terminalCursorStyle: String = "blinkBlock"
+    /// Option sends Meta/Alt; off lets Option type characters (AZERTY { } [ ] |).
+    var optionAsMeta: Bool = true
+    /// tmux `history-limit` for new panes.
+    var scrollbackLines: Int = 50_000
     /// UI continuity across launches: which folder was open, and which
     /// agent tab was active in each folder (keyed by uuidString).
     var lastSelectedFolderID: UUID?
@@ -51,6 +60,11 @@ final class Store {
         var presets: [AgentPreset]
         var killAgentsOnQuit: Bool
         var terminalFontSize: Double?
+        var terminalFontFamily: String?
+        var terminalLineSpacing: Double?
+        var terminalCursorStyle: String?
+        var optionAsMeta: Bool?
+        var scrollbackLines: Int?
         var lastSelectedFolderID: UUID?
         var activeAgentByFolder: [String: String]?
         var attentionSound: String?
@@ -71,6 +85,11 @@ final class Store {
         if !state.presets.isEmpty { presets = state.presets }
         killAgentsOnQuit = state.killAgentsOnQuit
         terminalFontSize = state.terminalFontSize ?? 13
+        terminalFontFamily = state.terminalFontFamily
+        terminalLineSpacing = state.terminalLineSpacing ?? 1.12
+        terminalCursorStyle = state.terminalCursorStyle ?? "blinkBlock"
+        optionAsMeta = state.optionAsMeta ?? true
+        scrollbackLines = state.scrollbackLines ?? 50_000
         lastSelectedFolderID = state.lastSelectedFolderID
         activeAgentByFolder = state.activeAgentByFolder ?? [:]
         attentionSound = state.attentionSound ?? "Glass"
@@ -89,6 +108,11 @@ final class Store {
             presets: presets,
             killAgentsOnQuit: killAgentsOnQuit,
             terminalFontSize: terminalFontSize,
+            terminalFontFamily: terminalFontFamily,
+            terminalLineSpacing: terminalLineSpacing,
+            terminalCursorStyle: terminalCursorStyle,
+            optionAsMeta: optionAsMeta,
+            scrollbackLines: scrollbackLines,
             lastSelectedFolderID: lastSelectedFolderID,
             activeAgentByFolder: activeAgentByFolder,
             attentionSound: attentionSound,

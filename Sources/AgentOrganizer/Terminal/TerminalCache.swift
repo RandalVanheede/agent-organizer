@@ -16,7 +16,7 @@ final class TerminalCache {
     /// Source of the terminal key bindings; set by `AppState`.
     weak var store: Store?
 
-    func view(for agent: Agent, cwd: URL, tmux: TmuxController, fontSize: Double) -> AOTerminalView {
+    func view(for agent: Agent, cwd: URL, tmux: TmuxController) -> AOTerminalView {
         if let existing = views[agent.id] {
             return existing
         }
@@ -24,8 +24,7 @@ final class TerminalCache {
         let view = AOTerminalView(frame: .zero)
         view.sessionName = agent.tmuxSession
         view.store = store
-        view.font = .monospacedSystemFont(ofSize: fontSize, weight: .regular)
-        view.lineSpacing = 1.12 // Herdr-like breathing room between lines
+        applySettings(to: view)
         view.applyTheme(for: NSApp.effectiveAppearance)
         let delegate = TerminalAttachDelegate()
         view.processDelegate = delegate
@@ -41,14 +40,25 @@ final class TerminalCache {
         return view
     }
 
-    /// Applies a new font size to every currently-live terminal view. Called
-    /// when the user changes the preference — new agents pick it up via
-    /// `view(for:...)`'s initial set, existing ones need this explicit push.
-    func applyFontSize(_ size: Double) {
-        let font = NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
-        for view in views.values {
-            view.font = font
-        }
+    /// Pushes the Terminal preferences to every live view (new ones get them in `view(for:)`).
+    func applySettings() {
+        views.values.forEach(applySettings(to:))
+    }
+
+    private func applySettings(to view: AOTerminalView) {
+        guard let store else { return }
+        let size = store.terminalFontSize
+        view.font = store.terminalFontFamily
+            .flatMap { NSFontManager.shared.font(withFamily: $0, traits: [], weight: 5, size: size) }
+            ?? .monospacedSystemFont(ofSize: size, weight: .regular)
+        if view.lineSpacing != store.terminalLineSpacing { view.lineSpacing = store.terminalLineSpacing }
+        view.optionAsMetaKey = store.optionAsMeta
+        view.getTerminal().setCursorStyle(CursorStyle(tagName: store.terminalCursorStyle) ?? .blinkBlock)
+    }
+
+    /// Installed fixed-pitch font families, for the Preferences picker.
+    static let monospacedFamilies: [String] = NSFontManager.shared.availableFontFamilies.filter {
+        NSFontManager.shared.font(withFamily: $0, traits: [], weight: 5, size: 13)?.isFixedPitch == true
     }
 
     func hasView(for agentID: Agent.ID) -> Bool {

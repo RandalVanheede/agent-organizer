@@ -81,9 +81,74 @@ private struct GeneralPreferencesView: View {
                 ), in: 9...24, step: 1) {
                     Text("Font size: \(Int(store.terminalFontSize)) pt")
                 }
+                Picker("Font", selection: Binding(
+                    get: { store.terminalFontFamily },
+                    set: { family in appState.updateTerminalSettings { $0.terminalFontFamily = family } }
+                )) {
+                    Text("System Monospaced").tag(String?.none)
+                    Divider()
+                    ForEach(TerminalCache.monospacedFamilies, id: \.self) { Text($0).tag(String?.some($0)) }
+                }
+                LabeledContent("Line spacing") {
+                    HStack {
+                        Slider(value: Binding(
+                            get: { store.terminalLineSpacing },
+                            set: { v in appState.updateTerminalSettings { $0.terminalLineSpacing = (v * 50).rounded() / 50 } }
+                        ), in: 1.0...1.6)
+                        Text(store.terminalLineSpacing, format: .number.precision(.fractionLength(2)))
+                            .monospacedDigit()
+                            .frame(width: 36, alignment: .trailing)
+                    }
+                }
+                Picker("Cursor", selection: Binding(
+                    get: { Self.cursorShape(store.terminalCursorStyle) },
+                    set: { shape in appState.updateTerminalSettings {
+                        $0.terminalCursorStyle = Self.cursorTag(shape: shape, blink: $0.terminalCursorStyle.hasPrefix("blink"))
+                    } }
+                )) {
+                    Text("Block").tag("Block")
+                    Text("Bar").tag("Bar")
+                    Text("Underline").tag("Underline")
+                }
+                .pickerStyle(.segmented)
+                Toggle("Blinking cursor", isOn: Binding(
+                    get: { store.terminalCursorStyle.hasPrefix("blink") },
+                    set: { blink in appState.updateTerminalSettings {
+                        $0.terminalCursorStyle = Self.cursorTag(shape: Self.cursorShape($0.terminalCursorStyle), blink: blink)
+                    } }
+                ))
+                Toggle("Use Option as Meta key", isOn: Binding(
+                    get: { store.optionAsMeta },
+                    set: { on in appState.updateTerminalSettings { $0.optionAsMeta = on } }
+                ))
+                Text("Off lets Option type characters such as { } [ ] | (AZERTY and other layouts); on sends Alt/Meta shortcuts to the tool instead.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section("tmux") {
+                TextField("Scrollback lines", value: Binding(
+                    get: { store.scrollbackLines },
+                    set: { n in
+                        store.scrollbackLines = min(max(n, 1_000), 1_000_000)
+                        store.save()
+                        appState.applyTmuxSettings()
+                    }
+                ), format: .number)
+                Text("Applies to agents started from now on. For anything else, put tmux commands in ~/.config/agent-organizer/tmux.conf: it is loaded each time Agent Organizer starts.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
+    }
+
+    /// "blinkBar" -> "Bar"
+    static func cursorShape(_ tag: String) -> String {
+        tag.replacingOccurrences(of: "blink", with: "").replacingOccurrences(of: "steady", with: "")
+    }
+
+    static func cursorTag(shape: String, blink: Bool) -> String {
+        (blink ? "blink" : "steady") + shape
     }
 }
 

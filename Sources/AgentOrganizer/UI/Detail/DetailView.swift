@@ -70,7 +70,6 @@ private struct AgentPane: View {
                 cwd: cwd,
                 tmux: tmux,
                 cache: appState.cache,
-                fontSize: appState.store.terminalFontSize,
                 remoteHost: folder.host
             )
             .id("\(agent.id)-\(appState.terminalEpochs[agent.id] ?? 0)")

@@ -94,6 +94,15 @@ final class TmuxController: Sendable {
         Self.exec("/usr/bin/pkill", ["-P", "1", "-f", "--", pattern])
     }
 
+    func setGlobalOption(_ name: String, _ value: String) {
+        run(["set-option", "-g", name, value])
+    }
+
+    func sourceFile(_ path: String) {
+        let (status, output) = run(["source-file", path])
+        if status != 0 { HookLog.write("user tmux.conf failed: \(output)") }
+    }
+
     func sessionExists(_ name: String) -> Bool {
         run(["has-session", "-t", name]).status == 0
     }

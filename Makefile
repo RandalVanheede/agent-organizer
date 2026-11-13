@@ -47,6 +47,7 @@ bundle: build
 	install_name_tool -add_rpath @executable_path/../Frameworks "$(APP_DIR)/Contents/MacOS/$(EXECUTABLE)"
 	cp Resources/tmux.conf "$(APP_DIR)/Contents/Resources/tmux.conf"
 	cp Resources/ao-hook.sh "$(APP_DIR)/Contents/Resources/ao-hook.sh"
+	cp -R Resources/fonts "$(APP_DIR)/Contents/Resources/fonts"
 	@if [ -x Resources/bin/tmux ]; then \
 		mkdir -p "$(APP_DIR)/Contents/Resources/bin"; \
 		cp Resources/bin/tmux "$(APP_DIR)/Contents/Resources/bin/tmux"; \
