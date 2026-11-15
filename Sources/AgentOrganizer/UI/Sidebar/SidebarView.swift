@@ -164,7 +164,7 @@ private struct AgentsPanel: View {
         }
         let buckets = Self.groups.map { group in
             (group, active.filter { agent in
-                let isTerminal = appState.store.preset(for: agent.presetID).command.isEmpty
+                let isTerminal = appState.store.preset(for: agent.presetID).command.isEmpty && !appState.runsClaude(agent)
                 return group.status.map { !isTerminal && appState.agentStatuses[agent.id] == $0 } ?? isTerminal
             }.sorted { since($0) < since($1) })
         }.filter { !$0.1.isEmpty }

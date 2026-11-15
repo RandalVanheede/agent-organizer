@@ -113,6 +113,21 @@ final class AppState {
         let parts = command.split(separator: ".", omittingEmptySubsequences: false)
         return parts.count >= 3 && parts.allSatisfy { !$0.isEmpty && $0.allSatisfy(\.isNumber) }
     }
+
+    /// Claude Code titles its pane "✳ topic" (idle) or "<braille spinner> topic"
+    /// (working) — the only Claude signal for remote panes, whose command is the ssh wrapper.
+    private static func isClaudeTitle(_ title: String) -> Bool {
+        guard let first = title.unicodeScalars.first else { return false }
+        return first == "✳" || (0x2800...0x28FF).contains(first.value)
+    }
+
+    /// Claude Code is running in this agent's pane, whatever preset started it
+    /// (e.g. `claude` typed into a Shell tab, locally or on a remote).
+    func runsClaude(_ agent: Agent) -> Bool {
+        if hookAware.contains(agent.id) { return true }
+        guard let pane = controlClient.panes[agent.tmuxSession] else { return false }
+        return Self.isClaudeCommand(pane.command) || Self.isClaudeTitle(pane.title)
+    }
     /// A tool that was running and has been quiet this long is assumed to be
     /// waiting for the user (used for tools without hooks, e.g. OpenCode).
     private static let quietBeforeDing: TimeInterval = 4.0
@@ -371,7 +386,9 @@ final class AppState {
         }
         controlClient.onPanesChanged = { [weak self] in
             guard let self else { return }
-            let titles = controlClient.panes.filter { !Self.shellCommands.contains($0.value.command) }.mapValues(\.title)
+            let titles = controlClient.panes.filter {
+                !Self.shellCommands.contains($0.value.command) || Self.isClaudeTitle($0.value.title)
+            }.mapValues(\.title)
             if titles != paneTitles { paneTitles = titles }
             recomputeStatuses()
         }
@@ -500,7 +517,7 @@ final class AppState {
             // Quiet-after-running heuristic (for persistent tools without
             // hooks, e.g. OpenCode). Plain shells go quiet between commands
             // all the time — no ding for those.
-            let isToolAgent = !store.preset(for: agent.presetID).command.isEmpty
+            let isToolAgent = !store.preset(for: agent.presetID).command.isEmpty || runsClaude(agent)
             switch new {
             case .running:
                 quietSince.removeValue(forKey: agent.id)

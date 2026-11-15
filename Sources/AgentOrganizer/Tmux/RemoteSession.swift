@@ -149,7 +149,9 @@ enum RemoteSession {
     private static func wrap(host: String, session: String, firstConnect: String, reconnect: String?) -> String {
         // Mirrors Resources/tmux.conf: clipboard + passthrough so Claude's own
         // (OSC 52) copy reaches the Mac; escape-time so Esc isn't delayed.
-        let options = ["status off", "mouse on", "set-clipboard on", "allow-passthrough on", "escape-time 0", "focus-events on"]
+        // set-titles forwards the remote pane title (Claude's "✳ topic") to our pane.
+        let options = ["status off", "mouse on", "set-clipboard on", "allow-passthrough on", "escape-time 0", "focus-events on",
+                       "set-titles on", "set-titles-string \"#T\""]
             .map { "set -g \($0)" }.joined(separator: " ';' ")
         var attach = "\(installOpener); \(tmux) \(options); exec \(tmux) attach -t \(session)"
         let first = "\(firstConnect); \(attach)"
