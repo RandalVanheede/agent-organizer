@@ -149,18 +149,24 @@ private struct HostHeader: View {
 }
 
 /// Bottom of the sidebar: every agent that isn't just sitting idle, from any
-/// folder, grouped Needs you / Working / Done. Click a row to jump to it.
+/// folder, grouped Needs you / Working / Done, with plain shell tabs in their
+/// own Terminals group (nil status). Click a row to jump to it.
 private struct AgentsPanel: View {
     @Environment(AppState.self) private var appState
 
-    private static let groups: [(title: String, status: AgentStatus)] = [
-        ("Needs you", .waiting), ("Working", .running), ("Done", .done),
+    private static let groups: [(title: String, status: AgentStatus?)] = [
+        ("Needs you", .waiting), ("Working", .running), ("Done", .done), ("Terminals", nil),
     ]
 
     var body: some View {
+        let active = appState.store.agents.filter {
+            [.waiting, .running, .done].contains(appState.agentStatuses[$0.id])
+        }
         let buckets = Self.groups.map { group in
-            (group, appState.store.agents.filter { appState.agentStatuses[$0.id] == group.status }
-                .sorted { since($0) < since($1) })
+            (group, active.filter { agent in
+                let isTerminal = appState.store.preset(for: agent.presetID).command.isEmpty
+                return group.status.map { !isTerminal && appState.agentStatuses[agent.id] == $0 } ?? isTerminal
+            }.sorted { since($0) < since($1) })
         }.filter { !$0.1.isEmpty }
         if !buckets.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
@@ -175,11 +181,12 @@ private struct AgentsPanel: View {
                         ForEach(buckets, id: \.0.title) { group, agents in
                             Text("\(group.title)  \(agents.count)")
                                 .font(.caption.weight(.medium))
-                                .foregroundStyle(group.status.color)
+                                .foregroundStyle(group.status?.color ?? .secondary)
                                 .padding(.horizontal, 8)
                                 .padding(.top, 6)
                             ForEach(agents) { agent in
-                                AgentPanelRow(agent: agent, status: group.status, since: since(agent))
+                                AgentPanelRow(agent: agent, status: appState.agentStatuses[agent.id] ?? .done,
+                                              since: since(agent))
                             }
                         }
                     }
