@@ -75,11 +75,14 @@ final class AgentHuddle {
             self?.dismissed = true
             self?.refresh()
         }, onResize: { [weak self, weak panel] size in
-            // Grow away from the chosen corner's edges, so the list never runs off-screen.
+            // Grow/collapse away from the nearer screen edge (where it sits now, so drags count),
+            // so the list never runs off-screen.
             guard let self, let panel, size.height > 0, panel.frame.size != size else { return }
             let f = panel.frame, corner = self.placedCorner ?? .bottomRight
+            let screen = (panel.screen ?? NSScreen.main)?.visibleFrame
+            let anchorTop = screen.map { f.midY > $0.midY } ?? corner.isTop
             panel.setFrame(NSRect(x: corner.isLeft ? f.minX : f.maxX - size.width,
-                                  y: corner.isTop ? f.maxY - size.height : f.minY,
+                                  y: anchorTop ? f.maxY - size.height : f.minY,
                                   width: size.width, height: size.height), display: true)
         }).environment(appState))
         host.sizingOptions = []
