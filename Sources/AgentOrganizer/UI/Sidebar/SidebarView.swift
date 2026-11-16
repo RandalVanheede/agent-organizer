@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// Folders only, A‑Z, behaving like vertical tabs: selecting one opens its
-/// canvas (agent tabs + terminal) on the right. Agents are never nested here.
+/// canvas (agent tabs + terminal) on the right. Agents are nested under their
+/// folder only when `Store.sidebarShowAgents` is on (off by default).
 struct SidebarView: View {
     @Environment(AppState.self) private var appState
     @Binding var columnVisibility: NavigationSplitViewVisibility
@@ -37,7 +38,7 @@ struct SidebarView: View {
             .padding(.horizontal, 8)
             .frame(height: 34)
             folderList
-            AgentsPanel()
+            if appState.store.sidebarAgentsPanel { AgentsPanel() }
         }
         .background(Chrome.background)
         .ignoresSafeArea(.container, edges: .top)
@@ -59,7 +60,12 @@ struct SidebarView: View {
                     ForEach(group.folders) { folder in
                         FolderRowView(folder: folder)
                             .tag(folder.id)
-                            .statusTint(appState.folderStatus(folder.id), style: appState.store.sidebarStatusStyle)
+                            // With agents listed below, the tint moves to their rows instead of doubling up.
+                            .statusTint(appState.store.sidebarShowAgents ? nil : appState.folderStatus(folder.id),
+                                        style: appState.store.sidebarStatusStyle)
+                        if appState.store.sidebarShowAgents {
+                            ForEach(appState.store.agents(in: folder.id)) { SidebarAgentRow(agent: $0) }
+                        }
                     }
                 }
             }
@@ -132,6 +138,41 @@ private struct FoldersHeader: View {
                 .accessibilityLabel(filtered ? "Show all folders" : "Show only folders with open agents")
             }
         }
+    }
+}
+
+/// An agent nested under its folder (optional). Untagged, so the List's
+/// folder selection is untouched; a click selects the agent (and its folder).
+private struct SidebarAgentRow: View {
+    @Environment(AppState.self) private var appState
+    let agent: Agent
+
+    var body: some View {
+        let status = appState.agentStatuses[agent.id] ?? .unknown
+        let style = appState.store.sidebarStatusStyle
+        let isActive = appState.selectedAgent?.id == agent.id
+        Button {
+            appState.selectAgent(agent)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: appState.store.preset(for: agent.presetID).icon)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16)
+                Text(appState.displayTitle(for: agent))
+                    .foregroundStyle(isActive ? .primary : .secondary)
+                    .fontWeight(isActive ? .medium : .regular)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                if style.showsIcon { StatusOrb(status: status, size: 6) }
+            }
+            .font(.callout)
+            .padding(.leading, 26) // under the folder name, past its avatar
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .statusTint(status, style: style)
+        .help("\(status.label) — click to open")
     }
 }
 

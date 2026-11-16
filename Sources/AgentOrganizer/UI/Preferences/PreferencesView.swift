@@ -7,8 +7,12 @@ struct PreferencesView: View {
         TabView {
             GeneralPreferencesView()
                 .tabItem { Label("General", systemImage: "gearshape") }
+            NotificationsPreferencesView()
+                .tabItem { Label("Notifications", systemImage: "bell.badge") }
             AppearancePreferencesView()
                 .tabItem { Label("Appearance", systemImage: "paintpalette") }
+            TerminalPreferencesView()
+                .tabItem { Label("Terminal", systemImage: "apple.terminal") }
             PresetsPreferencesView()
                 .tabItem { Label("Tools", systemImage: "terminal") }
             ShortcutsPreferencesView()
@@ -20,6 +24,27 @@ struct PreferencesView: View {
 
 private struct GeneralPreferencesView: View {
     @Environment(AppState.self) private var appState
+
+    var body: some View {
+        let store = appState.store
+        Form {
+            Section("Sessions") {
+                Toggle("Kill all agents when Agent Organizer quits", isOn: Binding(
+                    get: { store.killAgentsOnQuit },
+                    set: { store.killAgentsOnQuit = $0; store.save() }
+                ))
+                Text("Off by default: agents keep running in tmux after you quit, like a detached terminal tab.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+/// Everything that tells you an agent wants you: hooks, sound, the huddle.
+private struct NotificationsPreferencesView: View {
+    @Environment(AppState.self) private var appState
     private static let sounds = ["Glass", "Tink", "Pop", "Ping", "Purr", "Blow", "Bottle", "Frog", "Funk", "Hero", "Morse", "Sosumi", "Submarine"]
     @State private var hooksInstalled = HookInstaller.isInstalled()
     @State private var hookError: String?
@@ -27,7 +52,7 @@ private struct GeneralPreferencesView: View {
     var body: some View {
         let store = appState.store
         Form {
-            Section("Notifications") {
+            Section("Claude Code hooks") {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(hooksInstalled ? "Claude Code hooks installed" : "Claude Code hooks not installed")
@@ -49,6 +74,8 @@ private struct GeneralPreferencesView: View {
                 if let hookError {
                     Text(hookError).font(.caption).foregroundStyle(.red)
                 }
+            }
+            Section("Sound") {
                 HStack {
                     Picker("Attention sound", selection: Binding(
                         get: { store.attentionSound },
@@ -65,16 +92,34 @@ private struct GeneralPreferencesView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Section("Sessions") {
-                Toggle("Kill all agents when Agent Organizer quits", isOn: Binding(
-                    get: { store.killAgentsOnQuit },
-                    set: { store.killAgentsOnQuit = $0; store.save() }
+            Section("Agent Huddle") {
+                Toggle("Show while Agent Organizer is in the background", isOn: Binding(
+                    get: { store.agentHuddle },
+                    set: { store.agentHuddle = $0; store.save() }
                 ))
-                Text("Off by default: agents keep running in tmux after you quit, like a detached terminal tab.")
+                Picker("Position", selection: Binding(
+                    get: { store.huddleCorner },
+                    set: { store.huddleCorner = $0; store.save() }
+                )) {
+                    ForEach(HuddleCorner.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
+                .disabled(!store.agentHuddle)
+                Text("A small floating panel listing agents that need you, are working or just finished. Only shown while Agent Organizer isn't the active app; click an agent to jump to it, drag the header to move it.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Section("Terminal") {
+        }
+        .formStyle(.grouped)
+    }
+}
+
+private struct TerminalPreferencesView: View {
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        let store = appState.store
+        Form {
+            Section("Font") {
                 Stepper(value: Binding(
                     get: { store.terminalFontSize },
                     set: { appState.setTerminalFontSize($0) }
@@ -100,6 +145,8 @@ private struct GeneralPreferencesView: View {
                             .frame(width: 36, alignment: .trailing)
                     }
                 }
+            }
+            Section("Cursor") {
                 Picker("Cursor", selection: Binding(
                     get: { Self.cursorShape(store.terminalCursorStyle) },
                     set: { shape in appState.updateTerminalSettings {
@@ -117,6 +164,8 @@ private struct GeneralPreferencesView: View {
                         $0.terminalCursorStyle = Self.cursorTag(shape: Self.cursorShape($0.terminalCursorStyle), blink: blink)
                     } }
                 ))
+            }
+            Section("Keyboard") {
                 Toggle("Use Option as Meta key", isOn: Binding(
                     get: { store.optionAsMeta },
                     set: { on in appState.updateTerminalSettings { $0.optionAsMeta = on } }
@@ -417,6 +466,14 @@ private struct AppearancePreferencesView: View {
                 Text("Colours tint folder and Agents panel rows: blue running, orange needs you, green finished, red ended. The selected row keeps the normal highlight.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Toggle("Show agents under each folder", isOn: Binding(
+                    get: { store.sidebarShowAgents },
+                    set: { store.sidebarShowAgents = $0; store.save() }
+                ))
+                Toggle("Show Agents panel at the bottom", isOn: Binding(
+                    get: { store.sidebarAgentsPanel },
+                    set: { store.sidebarAgentsPanel = $0; store.save() }
+                ))
             }
             Section("Agent tabs") {
                 Toggle("Animate running tabs", isOn: Binding(

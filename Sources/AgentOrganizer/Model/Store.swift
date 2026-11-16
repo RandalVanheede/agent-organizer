@@ -30,8 +30,16 @@ final class Store {
     var sidebarOpenAgentsOnly: Bool = false
     /// How sidebar rows show agent status (Preferences › Appearance).
     var sidebarStatusStyle: SidebarStatusStyle = .icons
+    /// List each folder's agents beneath it in the sidebar; off by default.
+    var sidebarShowAgents: Bool = false
+    /// The Agents panel at the bottom of the sidebar; on by default.
+    var sidebarAgentsPanel: Bool = true
     /// Sliding segment under running tabs; off = static line.
     var animateRunningTabs: Bool = true
+    /// Floating Agent Huddle panel while the app is in the background; off by default.
+    var agentHuddle: Bool = false
+    /// Screen corner the huddle starts in (it can be dragged away for the session).
+    var huddleCorner: HuddleCorner = .bottomRight
     /// Follow system / force dark / force light (Preferences › Appearance).
     var appearance: AppAppearance = .system
     /// tmux sessions of Claude agents mid-turn (between UserPromptSubmit and
@@ -70,7 +78,11 @@ final class Store {
         var attentionSound: String?
         var sidebarOpenAgentsOnly: Bool?
         var sidebarStatusStyle: SidebarStatusStyle?
+        var sidebarShowAgents: Bool?
+        var sidebarAgentsPanel: Bool?
         var animateRunningTabs: Bool?
+        var agentHuddle: Bool?
+        var huddleCorner: HuddleCorner?
         var appearance: AppAppearance?
         var activeTurnSessions: [String]?
         var shortcutOverrides: [String: KeyCombo]?
@@ -95,7 +107,11 @@ final class Store {
         attentionSound = state.attentionSound ?? "Glass"
         sidebarOpenAgentsOnly = state.sidebarOpenAgentsOnly ?? false
         sidebarStatusStyle = state.sidebarStatusStyle ?? .icons
+        sidebarShowAgents = state.sidebarShowAgents ?? false
+        sidebarAgentsPanel = state.sidebarAgentsPanel ?? true
         animateRunningTabs = state.animateRunningTabs ?? true
+        agentHuddle = state.agentHuddle ?? false
+        huddleCorner = state.huddleCorner ?? .bottomRight
         appearance = state.appearance ?? .system
         activeTurnSessions = Set(state.activeTurnSessions ?? [])
         shortcutOverrides = state.shortcutOverrides ?? [:]
@@ -118,7 +134,11 @@ final class Store {
             attentionSound: attentionSound,
             sidebarOpenAgentsOnly: sidebarOpenAgentsOnly,
             sidebarStatusStyle: sidebarStatusStyle,
+            sidebarShowAgents: sidebarShowAgents,
+            sidebarAgentsPanel: sidebarAgentsPanel,
             animateRunningTabs: animateRunningTabs,
+            agentHuddle: agentHuddle,
+            huddleCorner: huddleCorner,
             appearance: appearance,
             activeTurnSessions: activeTurnSessions.sorted(),
             shortcutOverrides: shortcutOverrides
@@ -343,4 +363,18 @@ enum SidebarStatusStyle: String, Codable, CaseIterable {
     case icons, colors, both
     var showsIcon: Bool { self != .colors }
     var showsColor: Bool { self != .icons }
+}
+
+enum HuddleCorner: String, Codable, CaseIterable {
+    case topLeft, topRight, bottomLeft, bottomRight
+    var isTop: Bool { self == .topLeft || self == .topRight }
+    var isLeft: Bool { self == .topLeft || self == .bottomLeft }
+    var label: String {
+        switch self {
+        case .topLeft: "Top Left"
+        case .topRight: "Top Right"
+        case .bottomLeft: "Bottom Left"
+        case .bottomRight: "Bottom Right"
+        }
+    }
 }

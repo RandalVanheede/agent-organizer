@@ -77,8 +77,10 @@ private struct Spinner: View {
             .trim(from: 0, to: 0.7)
             .stroke(color, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
             .frame(width: size + 2, height: size + 2)
-            .rotationEffect(.degrees(spinning ? 360 : 0))
-            .animation(reduceMotion ? nil : .linear(duration: 1.2).repeatForever(autoreverses: false), value: spinning)
+            // Scoped to the rotation: a plain `.animation(value:)` also repeats the first layout move forever.
+            .animation(reduceMotion ? nil : .linear(duration: 1.2).repeatForever(autoreverses: false)) {
+                $0.rotationEffect(.degrees(spinning ? 360 : 0))
+            }
             .onAppear { spinning = true }
     }
 }

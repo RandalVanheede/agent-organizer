@@ -5,7 +5,7 @@ import SwiftUI
 /// piece. Soft grey in dark mode rather than SwiftTerm's pure-black default.
 extension AppAppearance {
     /// Applied app-wide; terminals re-theme via `viewDidChangeEffectiveAppearance`.
-    func apply() {
+    @MainActor func apply() {
         NSApp.appearance = switch self {
         case .system: nil
         case .dark: NSAppearance(named: .darkAqua)
