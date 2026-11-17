@@ -95,7 +95,11 @@ final class AgentHuddle {
     static func agents(_ appState: AppState) -> [Agent] {
         let order: [AgentStatus] = [.waiting, .running, .done]
         return appState.store.agents
-            .filter { order.contains(appState.agentStatuses[$0.id] ?? .unknown) }
+            .filter { agent in
+                // Same terminal test as the sidebar's Terminals group.
+                let isTerminal = appState.store.preset(for: agent.presetID).command.isEmpty && !appState.runsClaude(agent)
+                return !isTerminal && order.contains(appState.agentStatuses[agent.id] ?? .unknown)
+            }
             .sorted { order.firstIndex(of: appState.agentStatuses[$0.id]!)! < order.firstIndex(of: appState.agentStatuses[$1.id]!)! }
     }
 }
