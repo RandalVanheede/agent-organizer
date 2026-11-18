@@ -147,6 +147,7 @@ final class AppState {
     init() {
         #if DEBUG
         QuickOpenRanking.selfCheck()
+        TokenGate.selfCheck()
         #endif
         // Bundled fonts (JetBrains Mono, OFL), app-only: before any terminal or font list is built.
         if let fonts = Bundle.main.urls(forResourcesWithExtension: "ttf", subdirectory: "fonts") {
@@ -164,6 +165,13 @@ final class AppState {
         hookWatcher.start()
         HookInstaller.upgradeIfNeeded()
         restoreUISelection()
+        syncRemoteBrowser()
+    }
+
+    /// Starts the Mac-side browser bridge for every remote host, or stops them all.
+    func syncRemoteBrowser() {
+        guard store.remoteBrowser else { RemoteBrowser.stopAll(); return }
+        for host in Set(store.folders.compactMap(\.host)) { RemoteBrowser.ensure(host: host) }
     }
 
     // MARK: Claude Code hooks → attention + system notifications
@@ -720,7 +728,7 @@ final class AppState {
             err.runModal()
             return
         }
-        if let folder = store.addRemoteFolder(host: h, path: p) { selectFolder(folder.id) }
+        if let folder = store.addRemoteFolder(host: h, path: p) { selectFolder(folder.id); syncRemoteBrowser() }
     }
 
     func requestRemoveFolder(_ folder: Folder) {

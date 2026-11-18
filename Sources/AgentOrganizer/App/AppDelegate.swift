@@ -63,6 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// processes on their own server and simply keep running.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         appState?.finalizePendingKills()
+        RemoteBrowser.stopAll()
         if let appState, appState.store.killAgentsOnQuit {
             for agent in appState.store.agents {
                 appState.tmux?.killSession(agent.tmuxSession)

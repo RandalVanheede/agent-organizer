@@ -40,6 +40,8 @@ final class Store {
     var agentHuddle: Bool = false
     /// Screen corner the huddle starts in (it can be dragged away for the session).
     var huddleCorner: HuddleCorner = .bottomRight
+    /// Playwright MCP on the Mac for agents in remote folders (`RemoteBrowser`); off by default.
+    var remoteBrowser: Bool = false
     /// Follow system / force dark / force light (Preferences › Appearance).
     var appearance: AppAppearance = .system
     /// tmux sessions of Claude agents mid-turn (between UserPromptSubmit and
@@ -83,6 +85,7 @@ final class Store {
         var animateRunningTabs: Bool?
         var agentHuddle: Bool?
         var huddleCorner: HuddleCorner?
+        var remoteBrowser: Bool?
         var appearance: AppAppearance?
         var activeTurnSessions: [String]?
         var shortcutOverrides: [String: KeyCombo]?
@@ -112,6 +115,7 @@ final class Store {
         animateRunningTabs = state.animateRunningTabs ?? true
         agentHuddle = state.agentHuddle ?? false
         huddleCorner = state.huddleCorner ?? .bottomRight
+        remoteBrowser = state.remoteBrowser ?? false
         appearance = state.appearance ?? .system
         activeTurnSessions = Set(state.activeTurnSessions ?? [])
         shortcutOverrides = state.shortcutOverrides ?? [:]
@@ -139,6 +143,7 @@ final class Store {
             animateRunningTabs: animateRunningTabs,
             agentHuddle: agentHuddle,
             huddleCorner: huddleCorner,
+            remoteBrowser: remoteBrowser,
             appearance: appearance,
             activeTurnSessions: activeTurnSessions.sorted(),
             shortcutOverrides: shortcutOverrides

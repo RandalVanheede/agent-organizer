@@ -48,6 +48,8 @@ struct TmuxPaths {
     }
 
     static func loginShell() -> String {
-        ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        // passwd entry, not $SHELL: the app inherits $SHELL from whatever launched it
+        // (e.g. `make run` from a bash terminal), not the user's configured login shell.
+        getpwuid(getuid()).flatMap { String(validatingCString: $0.pointee.pw_shell) } ?? "/bin/zsh"
     }
 }

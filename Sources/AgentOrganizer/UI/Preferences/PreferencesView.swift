@@ -37,6 +37,15 @@ private struct GeneralPreferencesView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            Section("Remote folders") {
+                Toggle("Browser for remote agents", isOn: Binding(
+                    get: { store.remoteBrowser },
+                    set: { store.remoteBrowser = $0; store.save(); appState.syncRemoteBrowser() }
+                ))
+                Text("Runs Playwright MCP on this Mac (Chrome, own profile) and adds it to each remote host's Claude as \"ao-browser\" over ssh; pages load through the remote, so its localhost works. Needs Node (npx) here; restart running agents to pick it up. The forwarded port only answers requests carrying a per-host secret.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
     }

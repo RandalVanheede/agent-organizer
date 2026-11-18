@@ -34,6 +34,8 @@ final class TmuxController: Sendable {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: path)
         process.arguments = args
+        // tmux.conf's `default-command "$SHELL -l"` expands from the server's env.
+        process.environment = ProcessInfo.processInfo.environment.merging(["SHELL": TmuxPaths.loginShell()]) { _, new in new }
 
         let outPipe = Pipe()
         process.standardOutput = outPipe
