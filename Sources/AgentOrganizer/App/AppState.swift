@@ -168,10 +168,13 @@ final class AppState {
         syncRemoteBrowser()
     }
 
-    /// Starts the Mac-side browser bridge for every remote host, or stops them all.
+    /// Starts the Mac-side browser bridge for every remote host; stops (and
+    /// deregisters on the remote) bridges for hosts no longer wanted.
     func syncRemoteBrowser() {
-        guard store.remoteBrowser else { RemoteBrowser.stopAll(); return }
-        for host in Set(store.folders.compactMap(\.host)) { RemoteBrowser.ensure(host: host) }
+        guard store.remoteBrowser else { RemoteBrowser.stopAll(deregister: true); return }
+        let wanted = Set(store.folders.compactMap(\.host))
+        for host in RemoteBrowser.activeHosts.subtracting(wanted) { RemoteBrowser.stop(host: host, deregister: true) }
+        for host in wanted { RemoteBrowser.ensure(host: host) }
     }
 
     // MARK: Claude Code hooks → attention + system notifications
@@ -749,6 +752,7 @@ final class AppState {
         if selectedFolderID == folder.id { selectedFolderID = nil }
         folderPendingRemoval = nil
         persistUISelection()
+        if folder.isRemote { syncRemoteBrowser() } // last folder on a host → stop + deregister its bridge
     }
 
     func rescan(_ folder: Folder) {

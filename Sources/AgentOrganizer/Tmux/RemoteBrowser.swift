@@ -109,7 +109,13 @@ enum RemoteBrowser {
         }
     }
 
-    private static func stop(host: String) {
+    /// Hosts with a running bridge.
+    static var activeHosts: Set<String> { hosts }
+
+    /// `deregister`: also remove `ao-browser` and its token file on the remote, so
+    /// Claude there stops calling a port another remote user could then take over.
+    static func stop(host: String, deregister: Bool = false) {
+        if deregister, hosts.contains(host) { self.deregister(host: host) }
         hosts.remove(host)
         tunnels.remove(host)
         gates.removeValue(forKey: host)?.cancel()
@@ -147,7 +153,10 @@ enum RemoteBrowser {
 
     """
 
-    static func stopAll() {
+    /// Quitting keeps the remote registration (agents reconnect after relaunch);
+    /// turning the feature off removes it (`deregister`).
+    static func stopAll(deregister: Bool = false) {
+        if deregister { hosts.forEach { self.deregister(host: $0) } }
         hosts.removeAll()
         tunnels.removeAll()
         gates.values.forEach { $0.cancel() }
@@ -227,9 +236,57 @@ enum RemoteBrowser {
         process.terminationHandler = { p in
             HookLog.write("browser mcp registration on \(host): status \(p.terminationStatus)")
         }
-        do { try process.run() } catch { return }
-        input.fileHandleForWriting.write(Data((token + "\n").utf8))
-        try? input.fileHandleForWriting.close()
+        enqueueRemote(host, process, onlyIfActive: true) { _ in
+            input.fileHandleForWriting.write(Data((token + "\n").utf8))
+            try? input.fileHandleForWriting.close()
+        }
+    }
+
+    /// Fire-and-forget; a host that's unreachable now keeps its entry (logged).
+    private static func deregister(host: String) {
+        let script = #"claude mcp remove -s user ao-browser >/dev/null 2>&1; rm -f "$HOME/.cache/agent-organizer/browser-auth.json""#
+        let process = ssh([host, "$SHELL -ilc \(RemoteSession.quote("sh -c \(RemoteSession.quote(script))"))"])
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        process.terminationHandler = { p in
+            HookLog.write("browser mcp deregistration on \(host): status \(p.terminationStatus)")
+        }
+        enqueueRemote(host, process, onlyIfActive: false)
+    }
+
+    /// Register / deregister for one host run one at a time, in order: each is a
+    /// slow login shell, and unordered a late deregister could wipe a fresh
+    /// registration, or a late register leave one behind after turning off.
+    private static var remoteOps: [String: [(process: Process, onlyIfActive: Bool, onLaunch: (Process) -> Void)]] = [:]
+
+    private static func enqueueRemote(_ host: String, _ process: Process, onlyIfActive: Bool,
+                                      onLaunch: @escaping (Process) -> Void = { _ in }) {
+        remoteOps[host, default: []].append((process, onlyIfActive, onLaunch))
+        if remoteOps[host]?.count == 1 { launchNextRemote(host) }
+    }
+
+    private static func launchNextRemote(_ host: String) {
+        guard let op = remoteOps[host]?.first else { return }
+        // A registration queued before the feature was turned off is dropped.
+        guard !op.onlyIfActive || hosts.contains(host) else { return remoteOpFinished(host) }
+        let log = op.process.terminationHandler
+        op.process.terminationHandler = { p in
+            log?(p)
+            DispatchQueue.main.async { MainActor.assumeIsolated { remoteOpFinished(host) } }
+        }
+        do {
+            try op.process.run()
+            op.onLaunch(op.process)
+        } catch {
+            remoteOpFinished(host)
+        }
+    }
+
+    private static func remoteOpFinished(_ host: String) {
+        remoteOps[host]?.removeFirst()
+        if remoteOps[host]?.isEmpty == true { remoteOps[host] = nil }
+        launchNextRemote(host)
     }
 
     nonisolated private static func ssh(_ args: [String]) -> Process {
