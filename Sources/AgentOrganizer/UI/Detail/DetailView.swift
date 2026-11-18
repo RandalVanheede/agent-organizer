@@ -13,11 +13,11 @@ struct DetailView: View {
                 if let agent = appState.selectedAgent {
                     if let secondary = appState.splitAgent {
                         HSplitView {
-                            AgentPane(agent: agent, folder: folder, tmux: tmux)
-                            AgentPane(agent: secondary, folder: folder, tmux: tmux)
+                            AgentPane(agent: agent, folder: folder, tmux: tmux, isSplit: true)
+                            AgentPane(agent: secondary, folder: folder, tmux: tmux, isSplit: true)
                         }
                     } else {
-                        AgentPane(agent: agent, folder: folder, tmux: tmux)
+                        AgentPane(agent: agent, folder: folder, tmux: tmux, isSplit: false)
                     }
                 } else {
                     NoAgentsPlaceholder(folder: folder)
@@ -41,6 +41,9 @@ private struct AgentPane: View {
     let agent: Agent
     let folder: Folder
     let tmux: TmuxController
+    /// The header and focus outline only earn their space when two panes need telling apart;
+    /// a lone pane sits right under its own tab, and its cwd is in the status bar.
+    let isSplit: Bool
 
     private var cwd: URL { agent.resolvedCwd(folderPath: folder.path) }
 
@@ -48,23 +51,25 @@ private struct AgentPane: View {
         // Card: header + terminal inset by padding (not clipped: clipping an
         // NSView-backed terminal to a rounded shape is unreliable).
         VStack(spacing: 0) {
-            HStack(spacing: 6) {
-                Image(systemName: appState.store.preset(for: agent.presetID).icon)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text(appState.displayTitle(for: agent))
-                    .font(.caption.weight(.semibold))
-                    .lineLimit(1)
-                Text(folder.isRemote ? cwd.path : (cwd.path as NSString).abbreviatingWithTildeInPath)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.head)
-                Spacer(minLength: 4)
-                StatusOrb(status: appState.agentStatuses[agent.id] ?? .unknown)
+            if isSplit {
+                HStack(spacing: 6) {
+                    Image(systemName: appState.store.preset(for: agent.presetID).icon)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(appState.displayTitle(for: agent))
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                    Text(displayPath(cwd, in: folder))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                    Spacer(minLength: 4)
+                    StatusOrb(status: appState.agentStatuses[agent.id] ?? .unknown)
+                }
+                .padding(.horizontal, 10)
+                .frame(height: 26)
             }
-            .padding(.horizontal, 10)
-            .frame(height: 26)
             TerminalHostView(
                 agent: agent,
                 cwd: cwd,
@@ -79,13 +84,19 @@ private struct AgentPane: View {
                 }
             }
             .padding(.horizontal, 8)
+            .padding(.top, isSplit ? 0 : 6)
             .padding(.bottom, 6)
         }
         .background(Chrome.cardBackground, in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(
-            appState.selectedAgent?.id == agent.id ? Color.accentColor.opacity(0.7) : Chrome.cardBorder))
+            isSplit && appState.selectedAgent?.id == agent.id ? Color.accentColor.opacity(0.7) : Chrome.cardBorder))
         .padding(8)
     }
+}
+
+/// `~/…` locally; remote paths as-is (a tilde would mean the Mac's home).
+private func displayPath(_ url: URL, in folder: Folder) -> String {
+    folder.isRemote ? url.path : (url.path as NSString).abbreviatingWithTildeInPath
 }
 
 /// Footer: where you are (host · branch · agents) and the Quick Open hint.
@@ -101,15 +112,25 @@ private struct StatusBar: View {
     var body: some View {
         let count = appState.store.agents(in: folder.id).count
         HStack(spacing: 14) {
+            // Everything but the cwd gets priority 1, so the cwd truncates first
+            // (a negative priority on it would lose to the Spacer and always show "…").
             Label(folder.host ?? "This Mac", systemImage: folder.isRemote ? "server.rack" : "desktopcomputer")
+                .layoutPriority(1)
+            if let agent = appState.selectedAgent {
+                Label(displayPath(agent.resolvedCwd(folderPath: folder.path), in: folder), systemImage: "folder")
+                    .truncationMode(.head)
+            }
             if let branch {
                 Label(branch, systemImage: "arrow.triangle.branch")
+                    .layoutPriority(1)
             }
             Label(count == 1 ? "1 agent" : "\(count) agents", systemImage: "circle.fill")
                 .labelStyle(DotLabelStyle())
+                .layoutPriority(1)
             Spacer()
             if let shortcut = appState.store.shortcut(.quickOpen) {
                 Text("\(shortcut.display) open folder")
+                    .layoutPriority(1)
             }
         }
         .font(.caption)
@@ -175,12 +196,20 @@ private struct NoAgentsPlaceholder: View {
                 .foregroundStyle(.secondary)
             Text(folder.displayName)
                 .font(.title3.weight(.semibold))
-            Text("No agents in this folder yet.")
+            Text("No agents in this folder yet. Start one:")
                 .foregroundStyle(.secondary)
-            Button("New Agent…") {
-                appState.newAgentPopoverFolderID = folder.id
+            // Same one-click buttons as the tab bar (with the sub-repo menu where there is one).
+            if appState.store.presets.isEmpty {
+                Button("New Agent…") { appState.newAgentPopoverFolderID = folder.id }
+                    .keyboardShortcut(.defaultAction)
+            } else {
+                HStack(spacing: 8) {
+                    ForEach(appState.store.presets) { preset in
+                        NewAgentButton(folder: folder, preset: preset, large: true)
+                    }
+                }
+                .padding(.top, 4)
             }
-            .keyboardShortcut(.defaultAction)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

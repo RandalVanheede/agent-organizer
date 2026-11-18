@@ -22,13 +22,31 @@ struct AgentTabBar: View {
                     .padding(.horizontal, 6)
                 Divider().frame(height: 18)
             }
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 2) {
-                    ForEach(agents) { agent in
-                        AgentTabView(agent: agent, isActive: appState.selectedAgent?.id == agent.id)
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 2) {
+                        ForEach(agents) { agent in
+                            AgentTabView(agent: agent, isActive: appState.selectedAgent?.id == agent.id)
+                                .id(agent.id)
+                        }
                     }
+                    // As wide as the edge fades, so a fully scrolled tab isn't faded.
+                    .padding(.leading, 8)
+                    .padding(.trailing, 16)
                 }
-                .padding(.horizontal, 6)
+                // ⌘J, the Agents panel and the huddle can select a tab that's scrolled off.
+                .onChange(of: appState.selectedAgent?.id, initial: true) { old, id in
+                    guard let id else { return }
+                    if old == nil { proxy.scrollTo(id) } else { withAnimation { proxy.scrollTo(id) } }
+                }
+            }
+            // Fade the edges so tabs cut off by the bar read as "more this way".
+            .mask {
+                HStack(spacing: 0) {
+                    LinearGradient(colors: [.clear, .black], startPoint: .leading, endPoint: .trailing).frame(width: 8)
+                    Color.black
+                    LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: 16)
+                }
             }
             Divider().frame(height: 18).padding(.horizontal, 4)
             HStack(spacing: 4) {
@@ -65,10 +83,12 @@ struct SidebarToggleButton: View {
 
 /// One button per tool. Plain folders create an agent at the root
 /// instantly; folders with sub-repos offer root + each sub-repo in a menu.
-private struct NewAgentButton: View {
+struct NewAgentButton: View {
     @Environment(AppState.self) private var appState
     let folder: Folder
     let preset: AgentPreset
+    /// Bigger, filled label for the empty-folder placeholder.
+    var large = false
 
     var body: some View {
         if folder.subRepos.isEmpty {
@@ -101,18 +121,21 @@ private struct NewAgentButton: View {
     }
 
     private var label: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: large ? 6 : 4) {
             Image(systemName: "plus")
-                .font(.caption2.weight(.semibold))
+                .font(large ? .callout.weight(.semibold) : .caption2.weight(.semibold))
             Image(systemName: preset.icon)
-                .font(.caption)
+                .font(large ? .body : .caption)
             Text(preset.name)
-                .font(.caption)
+                .font(large ? .body : .caption)
                 .lineLimit(1)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .foregroundStyle(.secondary)
+        .padding(.horizontal, large ? 12 : 8)
+        .padding(.vertical, large ? 7 : 4)
+        .foregroundStyle(large ? .primary : .secondary)
+        .background {
+            if large { RoundedRectangle(cornerRadius: 7).fill(Color.primary.opacity(0.07)) }
+        }
         .contentShape(Rectangle())
     }
 }
@@ -139,11 +162,17 @@ private struct AgentTabView: View {
     }
     /// Only unusual load earns space on the tab; the rest is in the tooltip.
     private var hotUsage: ResourceUsage? { resourceUsage.flatMap { $0.isHot ? $0 : nil } }
+    /// Where it runs and what it uses first; the tmux session name last, for debugging.
     private var tooltip: String {
-        var lines = [agent.tmuxSession]
+        var lines: [String] = []
+        if let folder = appState.store.folder(agent.folderID) {
+            let path = agent.resolvedCwd(folderPath: folder.path).path
+            lines.append(folder.isRemote ? "\(folder.host ?? ""):\(path)" : (path as NSString).abbreviatingWithTildeInPath)
+        }
         if let usage = resourceUsage {
             lines.append("CPU \(usage.cpuLabel), memory \(usage.memoryLabel), \(usage.processCount) processes")
         }
+        lines.append(agent.tmuxSession)
         return lines.joined(separator: "\n")
     }
 
@@ -166,9 +195,11 @@ private struct AgentTabView: View {
                                 Text(subtitle).foregroundStyle(.secondary)
                             }
                             if let hot = hotUsage {
-                                Text("CPU \(hot.cpuLabel), \(hot.memoryLabel)")
+                                // Not orange: that means "needs you".
+                                Label("CPU \(hot.cpuLabel), \(hot.memoryLabel)", systemImage: "speedometer")
+                                    .labelStyle(.titleAndIcon)
                                     .monospacedDigit()
-                                    .foregroundStyle(.orange)
+                                    .foregroundStyle(.secondary)
                             }
                         }
                         .font(.caption2)

@@ -111,7 +111,7 @@ private struct EmptySidebarView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.background)
+        .background(Chrome.background) // covers the bare Folders header row
     }
 }
 
@@ -195,9 +195,8 @@ private struct HostHeader: View {
 private struct AgentsPanel: View {
     @Environment(AppState.self) private var appState
 
-    private static let groups: [(title: String, status: AgentStatus?)] = [
-        ("Needs you", .waiting), ("Working", .running), ("Done", .done), ("Terminals", nil),
-    ]
+    private static let groups: [(title: String, status: AgentStatus?)] =
+        [AgentStatus.waiting, .running, .done].map { ($0.label, $0) } + [("Terminals", nil)]
 
     var body: some View {
         let active = appState.store.agents.filter {
@@ -246,7 +245,23 @@ private struct AgentsPanel: View {
     }
 }
 
-private struct AgentPanelRow: View {
+/// "folder · agent title" on one line. The folder name is capped (not
+/// squeezed to nothing) so the title, which tells two agents in the same
+/// folder apart, keeps most of the room.
+struct AgentNameLine: View {
+    let folderName: String
+    let title: String
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Text(folderName).fontWeight(.semibold).lineLimit(1)
+                .frame(maxWidth: 90, alignment: .leading)
+            Text(" · " + title).foregroundStyle(.secondary).lineLimit(1)
+        }
+    }
+}
+
+struct AgentPanelRow: View {
     @Environment(AppState.self) private var appState
     let agent: Agent
     let status: AgentStatus
@@ -265,9 +280,7 @@ private struct AgentPanelRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(width: 16)
-                (Text(folder?.displayName ?? "").fontWeight(.semibold)
-                 + Text(" · " + appState.displayTitle(for: agent)).foregroundColor(.secondary))
-                    .lineLimit(1)
+                AgentNameLine(folderName: folder?.displayName ?? "", title: appState.displayTitle(for: agent))
                 Spacer(minLength: 4)
                 if let host = folder?.host {
                     Text(host).font(.caption2).foregroundStyle(.secondary).lineLimit(1)

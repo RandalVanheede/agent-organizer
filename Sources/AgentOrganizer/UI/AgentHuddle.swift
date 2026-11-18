@@ -113,10 +113,12 @@ private struct HuddleView: View {
 
     var body: some View {
         let agents = AgentHuddle.agents(appState)
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
-                Circle().fill(agents.contains { appState.agentStatuses[$0.id] == .waiting } ? AgentStatus.waiting.color : AgentStatus.running.color)
-                    .frame(width: 7, height: 7)
+                // Most urgent status shown (list is sorted that way); what you see while collapsed.
+                if let first = agents.first {
+                    StatusOrb(status: appState.agentStatuses[first.id] ?? .done).frame(width: 10)
+                }
                 Text("Agent Huddle").font(.subheadline.weight(.semibold))
                 Text("\(agents.count)").font(.subheadline).foregroundStyle(.secondary)
                 Spacer()
@@ -159,27 +161,30 @@ private struct HuddleRow: View {
     var body: some View {
         let status = appState.agentStatuses[agent.id] ?? .done
         let folderName = appState.store.folder(agent.folderID)?.displayName ?? ""
+        // A blocked agent ages from when it asked; others from their last status change.
+        let since = appState.attention[agent.id]?.since ?? appState.statusSince[agent.id] ?? Date().timeIntervalSince1970
         Button {
             appState.selectAgent(id: agent.id) // activates the app → huddle hides
         } label: {
-            HStack(spacing: 10) {
-                FolderAvatar(name: folderName, size: 26)
-                VStack(alignment: .leading, spacing: 2) {
-                    (Text(folderName).fontWeight(.semibold)
-                     + Text(" · " + appState.displayTitle(for: agent)).foregroundColor(.secondary))
-                        .lineLimit(1)
-                    Text(status.label)
-                        .font(.caption)
-                        .foregroundStyle(status.color)
+            HStack(spacing: 8) {
+                FolderAvatar(name: folderName)
+                VStack(alignment: .leading, spacing: 1) {
+                    AgentNameLine(folderName: folderName, title: appState.displayTitle(for: agent))
+                    // Coarse on purpose, like the sidebar's Agents panel.
+                    TimelineView(.periodic(from: .now, by: 30)) { context in
+                        (Text(status.label).foregroundColor(status.color)
+                         + Text(" · " + AgentPanelRow.age(since: since, now: context.date)).foregroundColor(.secondary))
+                            .font(.caption)
+                            .monospacedDigit()
+                    }
                 }
                 Spacer(minLength: 4)
                 StatusOrb(status: status, size: 8).frame(width: 12)
             }
             .font(.callout)
-            .padding(8)
-            .background(RoundedRectangle(cornerRadius: 8).fill(isHovering ? Color.primary.opacity(0.06) : .clear))
-            .background(RoundedRectangle(cornerRadius: 8).fill(Chrome.cardBackground))
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Chrome.hairline))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(RoundedRectangle(cornerRadius: 6).fill(isHovering ? Color.primary.opacity(0.06) : .clear))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

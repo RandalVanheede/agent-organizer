@@ -11,15 +11,16 @@ struct OnboardingView: View {
             Image(systemName: "terminal")
                 .font(.system(size: 40))
                 .foregroundStyle(.secondary)
-            Text("tmux not found")
+            Text("tmux couldn't start")
                 .font(.title2.bold())
-            Text("Agent Organizer uses tmux to keep your agent sessions running even after the app is closed.")
+            // The app bundles tmux, so landing here usually means a damaged copy of the app.
+            Text("Agent Organizer uses tmux to keep your agents running after the app closes. The copy of tmux inside the app is missing or broken. Reinstall Agent Organizer to fix it.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: 380)
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("Install it with Homebrew:")
+                Text("Or install tmux with Homebrew, and the app will use that:")
                     .font(.callout)
                 Text("brew install tmux")
                     .font(.system(.body, design: .monospaced))

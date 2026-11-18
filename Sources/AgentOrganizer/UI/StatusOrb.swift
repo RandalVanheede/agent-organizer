@@ -4,7 +4,8 @@ import SwiftUI
 extension AgentStatus {
     var color: Color {
         switch self {
-        case .running: return .blue
+        // Not blue: that's the system accent, i.e. selection / focus.
+        case .running: return .teal
         case .waiting: return .orange
         case .done: return .green
         case .idle: return .gray
@@ -15,9 +16,10 @@ extension AgentStatus {
 
     var label: String {
         switch self {
-        case .running: return "Running"
-        case .waiting: return "Needs your input"
-        case .done: return "Finished"
+        // Same words as the Agents panel groups.
+        case .running: return "Working"
+        case .waiting: return "Needs you"
+        case .done: return "Done"
         case .idle: return "Idle shell"
         case .exited: return "Session exited"
         case .unknown: return "Status unknown"
@@ -86,11 +88,13 @@ private struct Spinner: View {
 }
 
 extension View {
-    /// Faint status fill behind a sidebar row (Colours / Both style). Idle,
-    /// unknown and nil stay plain; the native selection draws over it.
+    /// Faint status fill behind a sidebar row (Colours / Both style). Done is
+    /// left plain here: it's where most agents rest, and a list full of green
+    /// drowns out "needs you" (the Agents panel still tints it). Idle, unknown
+    /// and nil stay plain; the native selection draws over it.
     func statusTint(_ status: AgentStatus?, style: SidebarStatusStyle) -> some View {
         let tinted: AgentStatus? = switch status {
-        case .running, .waiting, .done, .exited: status
+        case .running, .waiting, .exited: status
         default: nil
         }
         return listRowBackground(

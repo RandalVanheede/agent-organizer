@@ -31,8 +31,13 @@ enum Chrome {
     static let cardBorder = Color.primary.opacity(0.16)
 
     /// Stable per-name avatar colour (String.hashValue is seeded per launch, so hash by hand).
+    /// No status hues (teal, orange, green, red) and no accent blue, so an avatar never reads as a status.
     static func avatarColor(for name: String) -> Color {
-        let palette: [Color] = [.orange, .teal, .blue, .purple, .pink, .green, .indigo, .brown]
+        let palette: [Color] = [
+            .indigo, .purple, .pink, .brown,
+            Color(red: 0.42, green: 0.48, blue: 0.58), // slate
+            Color(red: 0.62, green: 0.36, blue: 0.52), // plum
+        ]
         let sum = name.unicodeScalars.reduce(0) { ($0 &* 31 &+ Int($1.value)) & 0xFFFF }
         return palette[sum % palette.count]
     }
