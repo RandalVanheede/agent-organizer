@@ -14,19 +14,24 @@ enum RemoteSession {
     /// The local pane's command (run by tmux via the user's shell). `sh -c`
     /// so the reconnect loop works whatever that shell is (fish etc.); a
     /// login shell takes over afterwards so the tab stays usable.
-    static func launchCommand(host: String, session: String, cwd: String, command: String?) -> String {
-        var create = "\(tmux) new-session -d -s \(session) -c \(quote(cwd)) \(openerEnv(session))"
-        if let command, !command.isEmpty {
-            create += " && \(typeWhenReady(session: session, command: command))"
+    @MainActor static func launchCommand(host: String, session: String, cwd: String, command: String?) -> String {
+        func create(withTokens: Bool) -> String {
+            var create = "\(tmux) new-session -d -s \(session) -c \(quote(cwd)) \(paneEnv(host: host, session: session, envTokens: withTokens))"
+            if let command, !command.isEmpty {
+                create += " && \(typeWhenReady(session: session, command: command))"
+            }
+            return create
         }
         // Re-running `create` on reconnect is harmless: new-session fails
-        // for an existing session, so send-keys is skipped.
-        return wrap(host: host, session: session, firstConnect: create, reconnect: create)
+        // for an existing session, so send-keys is skipped. The reconnect copy
+        // never carries tokens: it runs again on every reconnect for the
+        // session's whole life, and the pane already has its env.
+        return wrap(host: host, session: session, firstConnect: create(withTokens: true), reconnect: create(withTokens: false))
     }
 
     /// Restart: kill whatever runs in the remote pane, start `command` fresh.
-    static func restartCommand(host: String, session: String, cwd: String, command: String?) -> String {
-        var respawn = "\(tmux) respawn-pane -k -c \(quote(cwd)) -t \(session) \(openerEnv(session))"
+    @MainActor static func restartCommand(host: String, session: String, cwd: String, command: String?) -> String {
+        var respawn = "\(tmux) respawn-pane -k -c \(quote(cwd)) -t \(session) \(paneEnv(host: host, session: session))"
         if let command, !command.isEmpty {
             respawn += " && \(typeWhenReady(session: session, command: command))"
         }
@@ -56,11 +61,12 @@ enum RemoteSession {
     #!/bin/sh
     # Installed by Agent Organizer: opens URLs on the Mac running the app.
     case "$1" in http://*|https://*) ;; *) exit 1 ;; esac
-    [ -n "$AO_OPENER_TOKEN" ] || exit 1
+    tok=$(sed -n 's/^open=//p' "$HOME/.cache/agent-organizer/tokens/${AO_SESSION:-none}" 2>/dev/null); [ -n "$tok" ] || tok="$AO_OPEN_TOKEN"
+    [ -n "$tok" ] || exit 1
     t=$(tmux -L agent-organizer display -p -t "${AO_SESSION:-$TMUX_PANE}" '#{pane_tty}' 2>/dev/null)
     [ -n "$t" ] || exit 1
     p=$(printf '%s' "$1" | base64 | tr -d '\n')
-    printf '\033Ptmux;\033\033Ptmux;\033\033\033\033]7731;%s;%s\007\033\033\\\033\\' "$AO_OPENER_TOKEN" "$p" > "$t"
+    printf '\033Ptmux;\033\033Ptmux;\033\033\033\033]7731;%s;%s\007\033\033\\\033\\' "$tok" "$p" > "$t"
     """#
 
     /// (Re)written on every connect so it stays current; base64 dodges quoting.
@@ -69,17 +75,66 @@ enum RemoteSession {
         return "sh -c \(quote("d=\"\(openerDir)\"; mkdir -p \"$d\" && echo \(b64) | base64 -d > \"$d/xdg-open\" && chmod 755 \"$d/xdg-open\""))"
     }
 
-    /// Env for the remote pane (tmux ≥ 3.2 `-e`).
-    private static func openerEnv(_ session: String) -> String {
-        "-e BROWSER=\"\(openerDir)/xdg-open\" -e AO_SESSION=\(session) -e AO_OPENER_TOKEN=\(openerToken(session)) -e PATH=\"\(openerDir):$PATH\""
+    /// Env for the remote pane (tmux ≥ 3.2 `-e`). Tokens only when this run
+    /// couldn't deliver them as a file (no key auth): argv is readable by
+    /// other users of a shared host (`/proc/<pid>/cmdline`).
+    @MainActor private static func paneEnv(host: String, session: String, envTokens: Bool = true) -> String {
+        var env = "-e BROWSER=\"\(openerDir)/xdg-open\" -e AO_SESSION=\(session) -e PATH=\"\(openerDir):$PATH\""
+        if envTokens && !tokenHosts.contains(host) {
+            HookLog.write("tokens for \(session) on \(host) passed in the environment (token file not delivered)")
+            env += " -e AO_OPEN_TOKEN=\(token(.open, session)) -e AO_HOOK_TOKEN=\(token(.hook, session))"
+        }
+        return env
     }
 
+    // MARK: Per-session tokens
+
+    /// One token per purpose, so a leaked event token can't open URLs.
+    enum TokenPurpose: String { case open, hook }
+
     /// Per-session secret so text merely *printed* in the pane (a cat'ed file,
-    /// web content) can't forge an open request: HMAC(app key, session name),
+    /// web content) can't forge a request: HMAC(app key, purpose:session),
     /// derivable again after an app restart while the session lives on.
-    static func openerToken(_ session: String) -> String {
-        let mac = HMAC<SHA256>.authenticationCode(for: Data(session.utf8), using: openerKey)
+    static func token(_ purpose: TokenPurpose, _ session: String) -> String {
+        let mac = HMAC<SHA256>.authenticationCode(for: Data("\(purpose.rawValue):\(session)".utf8), using: openerKey)
         return mac.map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Constant-time check of an OSC payload's token field.
+    private static func tokenMatches(_ given: Data, _ purpose: TokenPurpose, _ session: String) -> Bool {
+        let expected = Data(token(purpose, session).utf8)
+        guard given.count == expected.count else { return false }
+        return zip(given, expected).reduce(UInt8(0)) { $0 | ($1.0 ^ $1.1) } == 0
+    }
+
+    /// Session names go into remote shell commands and file paths: ours are
+    /// `ao_<slug>_<hex>`, an adopted orphan's could be anything.
+    static func isSafeSession(_ s: String) -> Bool {
+        !s.isEmpty && s.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-") }
+    }
+
+    /// Hosts that took token files this run; their panes get no tokens in argv.
+    @MainActor private static var tokenHosts: Set<String> = []
+
+    /// Writes each session's tokens to a private file on the remote
+    /// (`~/.cache/agent-organizer/tokens/<session>`, 0600) over ssh stdin, and
+    /// refreshes the opener and hook scripts, so panes already running switch
+    /// to the file too. Needs key auth (BatchMode); without it launches fall
+    /// back to tokens in the environment.
+    @MainActor static func deliverTokens(host: String, sessions: [String]) {
+        let safe = sessions.filter(isSafeSession)
+        guard !host.hasPrefix("-") else { return }
+        var script = "umask 077; d=\"$HOME/.cache/agent-organizer\"; mkdir -p \"$d/tokens\" \"$d/bin\" && [ ! -L \"$d\" ] && [ ! -L \"$d/tokens\" ] && [ -O \"$d\" ] && [ -O \"$d/tokens\" ] && chmod 700 \"$d\" \"$d/tokens\" || exit 1\n"
+        for session in safe {
+            script += "printf 'open=%s\\nhook=%s\\n' \(token(.open, session)) \(token(.hook, session)) > \"$d/tokens/\(session)\"\n"
+        }
+        for (name, body) in [("xdg-open", openerScript), ("ao-hook", hookScript)] {
+            script += "echo \(Data((body + "\n").utf8).base64EncodedString()) | base64 -d > \"$d/bin/\(name)\" && chmod 755 \"$d/bin/\(name)\"\n"
+        }
+        script += "echo \(safe.count) token files\n"
+        runRemote(host: host, script: script, label: "Session tokens") { ok in
+            if ok { tokenHosts.insert(host) }
+        }
     }
 
     private static let openerKey: SymmetricKey = {
@@ -96,7 +151,7 @@ enum RemoteSession {
     /// that port forwarded to the remote first, where the callback listens.
     static func handleOpenRequest(_ payload: ArraySlice<UInt8>, host: String, session: String) {
         let parts = Data(payload).split(separator: UInt8(ascii: ";"), maxSplits: 1)
-        guard parts.count == 2, String(decoding: parts[0], as: UTF8.self) == openerToken(session) else {
+        guard parts.count == 2, tokenMatches(Data(parts[0]), .open, session) else {
             HookLog.write("remote open from \(host) rejected: bad token")
             return
         }
@@ -110,6 +165,134 @@ enum RemoteSession {
         }
         HookLog.write("remote open from \(host): \(url.absoluteString.prefix(120))")
         NSWorkspace.shared.open(url)
+    }
+
+    // MARK: Claude Code events from the remote
+
+    /// Private OSC the remote `ao-hook` emits: "<hook token>;<base64 event JSON>".
+    static let hookOSC = 7732
+    /// Set by AppState: routes a remote event like a local event file.
+    @MainActor static var onHookEvent: ((HookEventWatcher.Event) -> Void)?
+
+    /// Remote stand-in for the app's `ao-hook`, run by the Claude Code plugin
+    /// (never settings hooks: the remote's settings.json is left alone). Same
+    /// tty route and double passthrough wrap as the opener.
+    private static let hookScript = #"""
+    #!/bin/sh
+    # Installed by Agent Organizer: sends Claude Code events to the app on the Mac.
+    tok=$(sed -n 's/^hook=//p' "$HOME/.cache/agent-organizer/tokens/${AO_SESSION:-none}" 2>/dev/null); [ -n "$tok" ] || tok="$AO_HOOK_TOKEN"
+    [ -n "$tok" ] || { cat >/dev/null 2>&1; exit 0; }
+    t=$(tmux -L agent-organizer display -p -t "${AO_SESSION:-$TMUX_PANE}" '#{pane_tty}' 2>/dev/null)
+    [ -n "$t" ] || { cat >/dev/null 2>&1; exit 0; }
+    case "$1" in *[!A-Za-z]*|'') cat >/dev/null 2>&1; exit 0 ;; esac
+    p=$( { printf '{"event":"%s","payload":' "$1"; cat; printf '}'; } | base64 | tr -d '\n')
+    printf '\033Ptmux;\033\033Ptmux;\033\033\033\033]7732;%s;%s\007\033\033\\\033\\' "$tok" "$p" > "$t"
+    """#
+
+    static func handleHookEvent(_ payload: ArraySlice<UInt8>, host: String, session: String) {
+        let parts = Data(payload).split(separator: UInt8(ascii: ";"), maxSplits: 1)
+        guard parts.count == 2, tokenMatches(Data(parts[0]), .hook, session) else {
+            HookLog.write("remote hook event from \(host) rejected: bad token")
+            return
+        }
+        guard let data = Data(base64Encoded: Data(parts[1])),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              var event = HookEventWatcher.Event(obj) else { return }
+        event.session = session
+        MainActor.assumeIsolated { onHookEvent?(event) }
+    }
+
+    /// Hosts set up this app run; the ssh round trip is done once per launch.
+    @MainActor private static var integratedHosts: Set<String> = []
+
+    /// Copies the Claude Code plugin and the remote `ao-hook` to the remote's
+    /// `~/.cache/agent-organizer/` and, when its Claude Code has mods, installs
+    /// the plugin from there (once; later runs only refresh the files, which a
+    /// folder marketplace reads in place). Older Claude Code: files only, and
+    /// remote status stays pane-title based. Script goes over stdin, so its size
+    /// is no concern. Needs key auth (BatchMode); failures are only logged.
+    @MainActor static func installClaudeIntegration(host: String) {
+        guard !host.hasPrefix("-"), !integratedHosts.contains(host),
+              let bundled = HookInstaller.bundledPluginDirectory else { return }
+        integratedHosts.insert(host)
+        // Owned and private: this code runs in every Claude session of that user.
+        let files = HookInstaller.fileContents(bundled)
+        // Claude Code runs a cached copy: reinstall when the plugin changed.
+        let version = SHA256.hash(data: files.sorted { $0.key < $1.key }.reduce(into: Data()) { $0.append(Data($1.key.utf8)); $0.append($1.value) })
+            .prefix(8).map { String(format: "%02x", $0) }.joined()
+        var script = "umask 077; d=\"$HOME/.cache/agent-organizer\"; p=\"$d/claude-plugin\"; mkdir -p \"$d/bin\" && [ -O \"$d\" ] && chmod 700 \"$d\" || exit 1\n"
+        for (path, data) in files.sorted(by: { $0.key < $1.key }) {
+            // Paths come from our own bundle; quoted anyway.
+            script += "mkdir -p \"$p/\"\(quote((path as NSString).deletingLastPathComponent)) && echo \(data.base64EncodedString()) | base64 -d > \"$p/\"\(quote(path))\n"
+        }
+        script += "v=\(version)\n"
+        script += "echo \(Data((hookScript + "\n").utf8).base64EncodedString()) | base64 -d > \"$d/bin/ao-hook\" && chmod 755 \"$d/bin/ao-hook\"\n"
+        script += #"""
+        \#(findClaude)
+        [ -x "$c" ] || { echo "no claude"; exit 0; }
+        [ "$(cat "$d/plugin-installed" 2>/dev/null)" = "$v" ] && { echo "up to date"; exit 0; }
+        "$c" plugin validate --json "$p/agent-organizer" </dev/null 2>/dev/null | grep -q turn.complete || { echo "claude too old for mods"; exit 0; }
+        "$c" plugin marketplace add "$p" </dev/null >/dev/null 2>&1
+        # Replace only our own earlier install (never re-enable one the user removed some other way).
+        [ -f "$d/plugin-installed" ] && "$c" plugin uninstall agent-organizer@agent-organizer </dev/null >/dev/null 2>&1
+        # exit 0 on failure: only ssh trouble should make the app retry.
+        if "$c" plugin install agent-organizer@agent-organizer </dev/null >/dev/null 2>&1; then echo "$v" > "$d/plugin-installed"; echo "installed $v"; else rm -f "$d/plugin-installed"; echo "plugin install failed"; fi
+        """#
+        // ssh failed (host down, no key auth): let the next attempt retry.
+        runRemote(host: host, script: script, label: "Claude Code integration") { ok in
+            if !ok { integratedHosts.remove(host) }
+        }
+    }
+
+    /// Sets `c` to the remote's claude. `sh -s` over ssh isn't a login shell, so
+    /// nvm / npm-global installs need the login shell's PATH.
+    private static let findClaude = #"c=$(command -v claude 2>/dev/null) || c=$("${SHELL:-sh}" -lc 'command -v claude' </dev/null 2>/dev/null) || c="$HOME/.local/bin/claude""#
+
+    /// Undoes `installClaudeIntegration` (Preferences › Uninstall).
+    @MainActor static func uninstallClaudeIntegration(host: String) {
+        guard !host.hasPrefix("-") else { return }
+        integratedHosts.remove(host)
+        let script = """
+        d="$HOME/.cache/agent-organizer"
+        \(findClaude)
+        if [ -x "$c" ]; then "$c" plugin uninstall agent-organizer@agent-organizer </dev/null >/dev/null 2>&1; "$c" plugin marketplace remove agent-organizer </dev/null >/dev/null 2>&1; fi
+        rm -rf "$d/claude-plugin" "$d/bin/ao-hook" "$d/plugin-installed"; echo removed
+        """
+        runRemote(host: host, script: script, label: "Claude Code integration removal")
+    }
+
+    /// `done(succeeded)` runs on the main actor.
+    private static func runRemote(host: String, script: String, label: String, done: (@MainActor @Sendable (Bool) -> Void)? = nil) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+        process.arguments = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", host, "sh -s"]
+        let input = Pipe()
+        let output = Pipe()
+        process.standardInput = input
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        process.terminationHandler = { p in
+            let said = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            HookLog.write("\(label) on \(host): status \(p.terminationStatus) \(said)")
+            let ok = p.terminationStatus == 0
+            if let done { DispatchQueue.main.async { MainActor.assumeIsolated { done(ok) } } }
+        }
+        do {
+            try process.run()
+        } catch {
+            HookLog.write("\(label) on \(host): ssh didn't start")
+            if let done { DispatchQueue.main.async { MainActor.assumeIsolated { done(false) } } }
+            return
+        }
+        // ssh gone early: EPIPE instead of SIGPIPE (which would kill the app), and a throwing write.
+        _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+        DispatchQueue.global(qos: .utility).async {
+            try? input.fileHandleForWriting.write(contentsOf: Data(script.utf8))
+            try? input.fileHandleForWriting.close()
+        }
+        // A hung remote claude must not keep ssh around forever.
+        DispatchQueue.global().asyncAfter(deadline: .now() + 180) { if process.isRunning { process.terminate() } }
     }
 
     /// shortcut: fixed 10 min lifetime, enough for an OAuth login; upgrade if
@@ -130,9 +313,13 @@ enum RemoteSession {
     /// the remote session must be killed explicitly. Needs key auth
     /// (BatchMode); otherwise the remote session lingers and is logged.
     static func kill(host: String, session: String) {
+        guard !host.hasPrefix("-"), isSafeSession(session) else {
+            HookLog.write("remote kill skipped: unsafe host or session name")
+            return
+        }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-        process.arguments = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", host, "\(tmux) kill-session -t \(session)"]
+        process.arguments = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", host, "\(tmux) kill-session -t \(session); rm -f \"$HOME/.cache/agent-organizer/tokens/\"\(quote(session))"]
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         process.terminationHandler = { p in

@@ -124,6 +124,11 @@ private struct StatusBar: View {
                 Label(branch, systemImage: "arrow.triangle.branch")
                     .layoutPriority(1)
             }
+            // The running tool (Claude Code plugin), e.g. "Bash · npm test".
+            if let agent = appState.selectedAgent, let tool = appState.runningToolLabel(agent.id) {
+                Label(tool, systemImage: "hammer")
+                    .help(tool)
+            }
             Label(count == 1 ? "1 agent" : "\(count) agents", systemImage: "circle.fill")
                 .labelStyle(DotLabelStyle())
                 .layoutPriority(1)

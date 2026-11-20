@@ -12,7 +12,12 @@ esac
 dir="$HOME/Library/Application Support/Agent Organizer/events"
 mkdir -p "$dir" 2>/dev/null || exit 0
 
-payload=$(cat)
+# The app reads nothing from these two; their payloads carry the prompt and
+# Claude's last message, which shouldn't sit on disk.
+case "${1:-}" in
+  UserPromptSubmit|Stop) cat >/dev/null 2>&1; payload='{}' ;;
+  *) payload=$(cat) ;;
+esac
 [ -n "$payload" ] || payload='{}'
 
 tmp="$dir/.tmp.$$"

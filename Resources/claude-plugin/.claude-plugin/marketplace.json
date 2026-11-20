@@ -1,0 +1,11 @@
+{
+  "name": "agent-organizer",
+  "owner": { "name": "Agent Organizer" },
+  "plugins": [
+    {
+      "name": "agent-organizer",
+      "source": "./agent-organizer",
+      "description": "Reports Claude Code status to the Agent Organizer app."
+    }
+  ]
+}

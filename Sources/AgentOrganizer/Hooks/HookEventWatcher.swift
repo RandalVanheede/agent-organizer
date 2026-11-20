@@ -6,12 +6,40 @@ import Foundation
 @MainActor
 final class HookEventWatcher {
     struct Event {
-        let pane: String        // TMUX_PANE inside the agent's pane, e.g. "%7"
-        let name: String        // "Notification" | "Stop" | "UserPromptSubmit" | ...
-        let message: String?    // Notification's human-readable text, if any
+        let pane: String        // TMUX_PANE inside the agent's pane, e.g. "%7"; "" from a remote
+        /// The agent's session, known up front for remote events (OSC on its own terminal).
+        var session: String? = nil
+        let name: String        // "Notification" | "Stop" | "UserPromptSubmit" | "ToolStart" | ...
+        let message: String?    // Notification's / AONotify's human-readable text, if any
         let notificationType: String? // Notification's kind: permission_prompt, idle_prompt, …
         let cwd: String?
         let subagentID: String? // SubagentStart/Stop's `agent_id`
+        /// The Claude Code mod sent it (not the settings hook): its `Stop` also
+        /// fires on Esc and errors, with `reason`.
+        let fromMod: Bool
+        let reason: String?     // Stop from the mod: answer | aborted | refusal | error
+        let toolID: String?     // ToolStart/ToolEnd
+        let tool: String?
+        let detail: String?
+
+        /// `{"pane","event","payload"}` as `ao-hook` writes it (remote: no pane).
+        init?(_ obj: [String: Any]) {
+            guard let name = obj["event"] as? String else { return nil }
+            let payload = obj["payload"] as? [String: Any]
+            // Trust boundary (event files, remote OSC): cap every field.
+            func text(_ key: String, _ max: Int) -> String? { (payload?[key] as? String).map { String($0.prefix(max)) } }
+            self.pane = String((obj["pane"] as? String ?? "").prefix(16))
+            self.name = String(name.prefix(32).filter(\.isLetter))
+            message = text("message", 300)
+            notificationType = text("notification_type", 64)
+            cwd = text("cwd", 1024)
+            subagentID = text("agent_id", 64)
+            fromMod = payload?["source"] as? String == "mod"
+            reason = text("reason", 16).map { $0.filter(\.isLetter) }
+            toolID = text("id", 64)
+            tool = text("tool", 64)
+            detail = text("detail", 120)
+        }
     }
 
     static var eventsDirectory: URL {
@@ -43,28 +71,28 @@ final class HookEventWatcher {
     }
 
     /// Process every pending event file, oldest first, then remove it.
+    /// Ordered by modification time (ns on APFS): names are `<seconds>-<pid>`,
+    /// which sort wrong within a second (ToolStart/ToolEnd come in bursts).
     private func drain() {
         let fm = FileManager.default
-        guard let files = try? fm.contentsOfDirectory(at: Self.eventsDirectory, includingPropertiesForKeys: nil) else { return }
-        let ready = files
+        let key = URLResourceKey.contentModificationDateKey
+        guard let files = try? fm.contentsOfDirectory(at: Self.eventsDirectory, includingPropertiesForKeys: [key]) else { return }
+        func modified(_ url: URL) -> Date {
+            (try? url.resourceValues(forKeys: [key]).contentModificationDate) ?? .distantPast
+        }
+        let ready: [URL] = files
             .filter { $0.pathExtension == "json" && !$0.lastPathComponent.hasPrefix(".") }
-            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+            .sorted { (modified($0), $0.lastPathComponent) < (modified($1), $1.lastPathComponent) }
         for file in ready {
             defer { try? fm.removeItem(at: file) }
             guard let data = try? Data(contentsOf: file),
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let pane = obj["pane"] as? String, !pane.isEmpty,
-                  let name = obj["event"] as? String
+                  let event = Event(obj), !event.pane.isEmpty
             else { continue }
-            let payload = obj["payload"] as? [String: Any]
-            onEvent?(Event(
-                pane: pane,
-                name: name,
-                message: payload?["message"] as? String,
-                notificationType: payload?["notification_type"] as? String,
-                cwd: payload?["cwd"] as? String,
-                subagentID: payload?["agent_id"] as? String
-            ))
+            // Replayed after the app was closed: a stale toast or tool label is noise
+            // (turn and attention events still replay, as before).
+            if ["AONotify", "TurnEnd", "ToolStart", "ToolEnd"].contains(event.name), modified(file).timeIntervalSinceNow < -60 { continue }
+            onEvent?(event)
         }
     }
 }

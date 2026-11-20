@@ -143,6 +143,16 @@ final class AppState {
     /// shortcut: a sub-agent killed without SubagentStop stays counted until
     /// the tool exits/restarts; add a timeout if that shows up in practice.
     private var activeSubagents: [Agent.ID: Set<String>] = [:]
+    /// Main-loop tools running now, oldest first (Claude Code plugin's
+    /// ToolStart/ToolEnd); several at once when Claude runs them in parallel.
+    var runningTools: [Agent.ID: [RunningTool]] = [:]
+    private var lastNotifyAt: [Agent.ID: TimeInterval] = [:]
+    struct RunningTool: Equatable {
+        let id: String
+        let label: String
+    }
+    /// "Bash · npm test" for the status bar; nil when no tool is running.
+    func runningToolLabel(_ agentID: Agent.ID) -> String? { runningTools[agentID]?.last?.label }
 
     init() {
         #if DEBUG
@@ -163,9 +173,26 @@ final class AppState {
         turnActive = Set(store.agents.filter { store.activeTurnSessions.contains($0.tmuxSession) }.map(\.id))
         hookWatcher.onEvent = { [weak self] event in self?.handleHookEvent(event) }
         hookWatcher.start()
-        HookInstaller.upgradeIfNeeded()
+        RemoteSession.onHookEvent = { [weak self] event in self?.handleHookEvent(event) }
+        Task { [weak self] in
+            await HookInstaller.refresh()
+            self?.hooksInstalled = HookInstaller.isInstalled()
+            self?.syncRemoteClaudeIntegration()
+        }
         restoreUISelection()
         syncRemoteBrowser()
+        // Token files for remote agents still running from an earlier app run.
+        let remoteSessions = Dictionary(grouping: store.folders.filter { $0.host != nil }, by: { $0.host! })
+            .mapValues { folders in folders.flatMap { store.agents(in: $0.id).map(\.tmuxSession) } }
+        // Also hosts without agents: marks them delivered, so new agents skip env tokens.
+        for (host, sessions) in remoteSessions { RemoteSession.deliverTokens(host: host, sessions: sessions) }
+    }
+
+    /// Sets up the remote side of the Claude Code integration for every remote
+    /// host, once per app run, when it's installed locally.
+    func syncRemoteClaudeIntegration() {
+        guard HookInstaller.isInstalled() else { return }
+        for host in Set(store.folders.compactMap(\.host)) { RemoteSession.installClaudeIntegration(host: host) }
     }
 
     /// Starts the Mac-side browser bridge for every remote host; stops (and
@@ -180,17 +207,52 @@ final class AppState {
     // MARK: Claude Code hooks → attention + system notifications
 
     private func handleHookEvent(_ event: HookEventWatcher.Event) {
-        let session = sessionName(forPaneID: event.pane) ?? tmux?.sessionName(forPane: event.pane)
+        let session = event.session ?? sessionName(forPaneID: event.pane) ?? tmux?.sessionName(forPane: event.pane)
         guard let session, let agent = store.agents.first(where: { $0.tmuxSession == session }) else {
             HookLog.write("event \(event.name) pane=\(event.pane) -> no agent (session=\(session ?? "nil"))")
             return
         }
-        HookLog.write("event \(event.name) pane=\(event.pane) -> \(session) sub=\(event.subagentID ?? "-") active=\(activeSubagents[agent.id]?.count ?? 0)")
+        let isToolEvent = event.name == "ToolStart" || event.name == "ToolEnd"
+        if !isToolEvent { // a line per tool call would drown the log
+            HookLog.write("event \(event.name)\(event.reason.map { "(\($0))" } ?? "") pane=\(event.pane) -> \(session) sub=\(event.subagentID ?? "-") active=\(activeSubagents[agent.id]?.count ?? 0)")
+        }
         lastHookAt[agent.id] = Date().timeIntervalSince1970
-        hookAware.insert(agent.id)
+        if !hookAware.contains(agent.id) { hookAware.insert(agent.id) } // observed: skip no-op writes
         hooksInstalled = true
+        if event.name == "Stop" || event.name == "UserPromptSubmit" { runningTools.removeValue(forKey: agent.id) }
 
         switch event.name {
+        case "ToolStart":
+            guard let id = event.toolID, let tool = event.tool, (runningTools[agent.id]?.count ?? 0) < 32 else { break }
+            let detail = event.detail ?? ""
+            runningTools[agent.id, default: []].append(RunningTool(id: id, label: detail.isEmpty ? tool : "\(tool) · \(detail)"))
+        case "ToolEnd":
+            runningTools[agent.id]?.removeAll { $0.id == event.toolID }
+            if runningTools[agent.id]?.isEmpty == true { runningTools.removeValue(forKey: agent.id) }
+        case "AONotify":
+            // Claude asked (via the plugin's notify tool) to tell the user something.
+            // Auto-allowed tool, so a prompt injection could spam it: one per 30 s.
+            let now = Date().timeIntervalSince1970
+            guard !isBeingWatched(agent.id), now - (lastNotifyAt[agent.id] ?? 0) > 30 else { break }
+            lastNotifyAt[agent.id] = now
+            flagAttention(agent.id, .finished)
+            playAttentionSound()
+            postNotification(agentID: agent.id, title: notificationTitle(agent), body: event.message.flatMap { $0.isEmpty ? nil : $0 } ?? "Claude has an update.")
+        case "TurnEnd":
+            // From the plugin: a turn that ended without an answer (the settings
+            // Stop hook doesn't fire for these). Esc: the user stopped it, nothing
+            // to flag, and a pending prompt went with it. Errors flag like a Stop.
+            turnActive.remove(agent.id)
+            runningTools.removeValue(forKey: agent.id)
+            if event.reason == "aborted" {
+                clearAttention(agent.id)
+                recomputeStatuses()
+            } else if !isBeingWatched(agent.id) {
+                recomputeStatuses()
+                flagAttention(agent.id, .finished)
+                playAttentionSound()
+                postNotification(agentID: agent.id, title: notificationTitle(agent), body: "Stopped on an error.")
+            }
         case "UserPromptSubmit":
             turnActive.insert(agent.id)
             clearAttention(agent.id)
@@ -210,6 +272,7 @@ final class AppState {
             let kind: Attention.Kind
             if event.name == "Stop" {
                 turnActive.remove(agent.id)
+                recomputeStatuses()
                 kind = .finished
             } else {
                 switch Self.notificationKind(type: event.notificationType, message: event.message) {
@@ -229,16 +292,20 @@ final class AppState {
             flagAttention(agent.id, kind)
             guard !watched else { break }
             playAttentionSound()
-            let folderName = store.folder(agent.folderID)?.displayName ?? ""
-            let title = displayTitle(for: agent)
             postNotification(
                 agentID: agent.id,
-                title: folderName.isEmpty ? title : "\(title) — \(folderName)",
+                title: notificationTitle(agent),
                 body: kind == .finished ? "Finished. Ready for your next prompt." : (event.message ?? "Needs your input.")
             )
         default:
             break
         }
+    }
+
+    private func notificationTitle(_ agent: Agent) -> String {
+        let folderName = store.folder(agent.folderID)?.displayName ?? ""
+        let title = displayTitle(for: agent)
+        return folderName.isEmpty ? title : "\(title) — \(folderName)"
     }
 
     /// System notification when macOS allows it; otherwise (locally built,
@@ -519,6 +586,10 @@ final class AppState {
             } else {
                 continue
             }
+            if runningTools[agent.id] != nil, let pane = controlClient.panes[agent.tmuxSession],
+               !Self.isClaudeCommand(pane.command), !Self.isClaudeTitle(pane.title) {
+                runningTools.removeValue(forKey: agent.id) // Claude exited mid-tool: no ToolEnd will come
+            }
             let old = agentStatuses[agent.id]
             if old != new {
                 agentStatuses[agent.id] = new
@@ -552,6 +623,7 @@ final class AppState {
                 // Tool gone (back to shell / session dead): its sub-agents and flags too.
                 if new == .idle || new == .exited {
                     activeSubagents.removeValue(forKey: agent.id)
+                    runningTools.removeValue(forKey: agent.id)
                     turnActive.remove(agent.id)
                     if attention.removeValue(forKey: agent.id) != nil { updateDockBadge() }
                 }
@@ -725,13 +797,13 @@ final class AppState {
         let h = host.stringValue.trimmingCharacters(in: .whitespaces)
         let p = path.stringValue.trimmingCharacters(in: .whitespaces)
         // shortcut: no `~` expansion (remote home unknown locally); require absolute.
-        guard !h.isEmpty, !h.contains(" "), p.hasPrefix("/") else {
+        guard !h.isEmpty, !h.contains(" "), !h.hasPrefix("-"), p.hasPrefix("/") else {
             let err = NSAlert()
             err.messageText = "Need a host and an absolute path (starting with /)."
             err.runModal()
             return
         }
-        if let folder = store.addRemoteFolder(host: h, path: p) { selectFolder(folder.id); syncRemoteBrowser() }
+        if let folder = store.addRemoteFolder(host: h, path: p) { selectFolder(folder.id); syncRemoteBrowser(); syncRemoteClaudeIntegration() }
     }
 
     func requestRemoveFolder(_ folder: Folder) {
@@ -802,6 +874,8 @@ final class AppState {
     private func startSession(for agent: Agent, in folder: Folder, command: String) -> Bool {
         let cwd = agent.resolvedCwd(folderPath: folder.path)
         if let host = folder.host {
+            RemoteSession.deliverTokens(host: host, sessions: [agent.tmuxSession])
+            if HookInstaller.isInstalled() { RemoteSession.installClaudeIntegration(host: host) } // no-op once done this run
             let launch = RemoteSession.launchCommand(host: host, session: agent.tmuxSession, cwd: cwd.path, command: command)
             return tmux?.ensureSession(name: agent.tmuxSession, cwd: FileManager.default.homeDirectoryForCurrentUser, command: nil, paneCommand: launch) ?? false
         }
@@ -889,6 +963,8 @@ final class AppState {
             return
         }
         if let host = folder.host {
+            RemoteSession.deliverTokens(host: host, sessions: [agent.tmuxSession])
+            if HookInstaller.isInstalled() { RemoteSession.installClaudeIntegration(host: host) } // no-op once done this run
             let restart = RemoteSession.restartCommand(host: host, session: agent.tmuxSession,
                                                        cwd: agent.resolvedCwd(folderPath: folder.path).path, command: command)
             tmux?.respawn(session: agent.tmuxSession, cwd: FileManager.default.homeDirectoryForCurrentUser, command: nil, paneCommand: restart)
@@ -981,7 +1057,8 @@ final class AppState {
 
     private static func slug(_ text: String) -> String {
         let allowed = CharacterSet.alphanumerics
-        let mapped = text.lowercased().unicodeScalars.map { allowed.contains($0) ? Character($0) : "-" }
+        // ASCII only: session names end up in remote shell commands and file names.
+        let mapped = text.lowercased().unicodeScalars.map { $0.isASCII && allowed.contains($0) ? Character($0) : "-" }
         return String(mapped)
     }
 }

@@ -55,8 +55,17 @@ private struct GeneralPreferencesView: View {
 private struct NotificationsPreferencesView: View {
     @Environment(AppState.self) private var appState
     private static let sounds = ["Glass", "Tink", "Pop", "Ping", "Purr", "Blow", "Bottle", "Frog", "Funk", "Hero", "Morse", "Sosumi", "Submarine"]
-    @State private var hooksInstalled = HookInstaller.isInstalled()
+    @State private var hookMode = HookInstaller.installedMode()
     @State private var hookError: String?
+    @State private var hookBusy = false
+
+    private var hookStatus: String {
+        switch hookMode {
+        case .plugin: return "Installed: hooks + Claude Code plugin"
+        case .settings: return "Installed: hooks (this Claude Code has no mods)"
+        case nil: return "Claude Code integration not installed"
+        }
+    }
 
     var body: some View {
         let store = appState.store
@@ -64,21 +73,35 @@ private struct NotificationsPreferencesView: View {
             Section("Claude Code hooks") {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(hooksInstalled ? "Claude Code hooks installed" : "Claude Code hooks not installed")
-                        Text("Adds Notification / Stop / UserPromptSubmit hooks to ~/.claude/settings.json (a backup is kept). Agents then flag the tab, badge the Dock, and post a notification when they need you. Only fires for claude sessions started from this app.")
+                        Text(hookStatus)
+                        Text("Adds hooks to ~/.claude/settings.json (a backup is kept): agents then flag the tab, badge the Dock, and post a notification when they need you. With a Claude Code that supports mods it also installs the agent-organizer plugin, which reports Esc and errors right away, shows the running tool in the status bar, works in remote folders (key-based ssh), and gives Claude a notify tool. Only fires for claude sessions started from this app; restart running ones.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button(hooksInstalled ? "Uninstall" : "Install") {
-                        do {
-                            if hooksInstalled { try HookInstaller.uninstall() } else { try HookInstaller.install() }
-                            hookError = nil
-                        } catch {
-                            hookError = error.localizedDescription
+                    if hookBusy { ProgressView().controlSize(.small) }
+                    Button(hookMode != nil ? "Uninstall" : "Install") {
+                        hookBusy = true
+                        Task {
+                            do {
+                                if hookMode != nil {
+                                    try await HookInstaller.uninstall()
+                                    for host in Set(appState.store.folders.compactMap(\.host)) {
+                                        RemoteSession.uninstallClaudeIntegration(host: host)
+                                    }
+                                } else {
+                                    try await HookInstaller.install()
+                                    appState.syncRemoteClaudeIntegration()
+                                }
+                                hookError = nil
+                            } catch {
+                                hookError = error.localizedDescription
+                            }
+                            hookMode = HookInstaller.installedMode()
+                            hookBusy = false
                         }
-                        hooksInstalled = HookInstaller.isInstalled()
                     }
+                    .disabled(hookBusy)
                 }
                 if let hookError {
                     Text(hookError).font(.caption).foregroundStyle(.red)

@@ -106,6 +106,13 @@ final class AOTerminalView: LocalProcessTerminalView {
                 let bytes = ArraySlice(Array(payload))
                 DispatchQueue.main.async { RemoteSession.handleOpenRequest(bytes, host: host, session: session) }
             }
+            // shortcut: only tabs opened this app run have a view to receive
+            // these; others fall back to pane-title status until opened.
+            getTerminal().registerOscHandler(code: RemoteSession.hookOSC) { [weak self] payload in
+                guard let host = self?.remoteHost, let session = self?.sessionName else { return }
+                let bytes = ArraySlice(Array(payload))
+                DispatchQueue.main.async { RemoteSession.handleHookEvent(bytes, host: host, session: session) }
+            }
         }
     }
 

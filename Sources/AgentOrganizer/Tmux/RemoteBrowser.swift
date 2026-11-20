@@ -236,8 +236,10 @@ enum RemoteBrowser {
         process.terminationHandler = { p in
             HookLog.write("browser mcp registration on \(host): status \(p.terminationStatus)")
         }
+        // ssh gone early: EPIPE and a throwing write, not SIGPIPE / an ObjC exception.
+        _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
         enqueueRemote(host, process, onlyIfActive: true) { _ in
-            input.fileHandleForWriting.write(Data((token + "\n").utf8))
+            try? input.fileHandleForWriting.write(contentsOf: Data((token + "\n").utf8))
             try? input.fileHandleForWriting.close()
         }
     }
