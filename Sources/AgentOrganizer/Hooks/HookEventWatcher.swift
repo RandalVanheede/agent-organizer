@@ -9,7 +9,7 @@ final class HookEventWatcher {
         let pane: String        // TMUX_PANE inside the agent's pane, e.g. "%7"; "" from a remote
         /// The agent's session, known up front for remote events (OSC on its own terminal).
         var session: String? = nil
-        let name: String        // "Notification" | "Stop" | "UserPromptSubmit" | "ToolStart" | ...
+        let name: String        // "Notification" | "Stop" | "UserPromptSubmit" | "TurnEnd" | ...
         let message: String?    // Notification's / AONotify's human-readable text, if any
         let notificationType: String? // Notification's kind: permission_prompt, idle_prompt, …
         let cwd: String?
@@ -18,9 +18,6 @@ final class HookEventWatcher {
         /// fires on Esc and errors, with `reason`.
         let fromMod: Bool
         let reason: String?     // Stop from the mod: answer | aborted | refusal | error
-        let toolID: String?     // ToolStart/ToolEnd
-        let tool: String?
-        let detail: String?
 
         /// `{"pane","event","payload"}` as `ao-hook` writes it (remote: no pane).
         init?(_ obj: [String: Any]) {
@@ -28,17 +25,14 @@ final class HookEventWatcher {
             let payload = obj["payload"] as? [String: Any]
             // Trust boundary (event files, remote OSC): cap every field.
             func text(_ key: String, _ max: Int) -> String? { (payload?[key] as? String).map { String($0.prefix(max)) } }
-            self.pane = String((obj["pane"] as? String ?? "").prefix(16))
+            self.pane = String((obj["pane"] as? String ?? "").prefix(16).filter { $0.isNumber || $0 == "%" })
             self.name = String(name.prefix(32).filter(\.isLetter))
             message = text("message", 300)
             notificationType = text("notification_type", 64)
             cwd = text("cwd", 1024)
-            subagentID = text("agent_id", 64)
+            subagentID = text("agent_id", 64).map { $0.filter { $0.isLetter || $0.isNumber || "-_".contains($0) } }
             fromMod = payload?["source"] as? String == "mod"
             reason = text("reason", 16).map { $0.filter(\.isLetter) }
-            toolID = text("id", 64)
-            tool = text("tool", 64)
-            detail = text("detail", 120)
         }
     }
 
@@ -72,7 +66,7 @@ final class HookEventWatcher {
 
     /// Process every pending event file, oldest first, then remove it.
     /// Ordered by modification time (ns on APFS): names are `<seconds>-<pid>`,
-    /// which sort wrong within a second (ToolStart/ToolEnd come in bursts).
+    /// which sort wrong within a second.
     private func drain() {
         let fm = FileManager.default
         let key = URLResourceKey.contentModificationDateKey
@@ -91,7 +85,7 @@ final class HookEventWatcher {
             else { continue }
             // Replayed after the app was closed: a stale toast or tool label is noise
             // (turn and attention events still replay, as before).
-            if ["AONotify", "TurnEnd", "ToolStart", "ToolEnd"].contains(event.name), modified(file).timeIntervalSinceNow < -60 { continue }
+            if ["AONotify", "TurnEnd"].contains(event.name), modified(file).timeIntervalSinceNow < -60 { continue }
             onEvent?(event)
         }
     }

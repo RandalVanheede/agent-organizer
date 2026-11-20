@@ -11,6 +11,8 @@ import type { Register, EngineInterface } from 'claude-code'
 // conversation; on the Mac those come from settings.json hooks instead. Never a
 // catch-all tool.call/tool.run hook either: any hook that may match a tool there
 // turns off its move to the background and its live output, in every session.
+// And no session.append: the built-in plugin skips it now and then, and each
+// skip posts a notice into the user's conversation.
 const MAC_HOOK = '$HOME/Library/Application Support/Agent Organizer/bin/ao-hook'
 const REMOTE_HOOK = '$HOME/.cache/agent-organizer/bin/ao-hook'
 // AO_SESSION is set only in the app's remote panes.
@@ -46,41 +48,6 @@ async function send($: EngineInterface, event: string, payload: Record<string, u
     // The app being gone must never break Claude.
   }
 }
-
-/** A short label for the running tool: the program, file name, pattern or URL. */
-function detail(input: Record<string, unknown>): string {
-  for (const key of ['command', 'file_path', 'notebook_path', 'pattern', 'url', 'description', 'query']) {
-    const value = input[key]
-    if (typeof value !== 'string' || !value) continue
-    const text = key === 'command' ? program(value) : key === 'url' ? urlLabel(value) : key.endsWith('_path') ? (value.split('/').pop() ?? value) : value
-    return text.replace(/\s+/g, ' ').slice(0, 80)
-  }
-  return ''
-}
-
-/** Tools whose second word is a subcommand, not data. */
-const SUBCOMMAND_TOOLS = /^(git|npm|pnpm|yarn|bun|npx|docker|kubectl|cargo|make|swift|brew|go|composer|ddev|drush|gh|terraform)$/
-
-/** "npm test", "git status", else the program name alone: arguments may hold secrets (`mysql -pX`, `echo hunter2`). */
-function program(command: string): string {
-  const words = command.trim().split(/\s+/)
-  while (words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0] ?? '')) words.shift() // `API_KEY=… npm test`
-  const name = (words[0] ?? '').split('/').pop() ?? ''
-  if (!/^[A-Za-z0-9._+-]+$/.test(name)) return ''
-  const next = words[1] ?? ''
-  return SUBCOMMAND_TOOLS.test(name) && /^[a-z][a-z0-9:-]*$/.test(next) ? `${name} ${next}` : name
-}
-
-/** Host only: paths and query strings can carry tokens (webhooks, `/bot<token>/`). */
-function urlLabel(url: string): string {
-  try {
-    return new URL(url).host
-  } catch {
-    return ''
-  }
-}
-
-type Block = { type?: unknown; id?: unknown; name?: unknown; input?: unknown; tool_use_id?: unknown }
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
@@ -118,23 +85,6 @@ export const register: Register = on => {
       const isAnswer = e.reason === 'answer' || e.reason === 'refusal'
       if (!isAnswer) await send($, 'TurnEnd', { reason: e.reason })
       else if (where === 'remote') await send($, 'Stop', { reason: e.reason })
-    }
-    return result
-  })
-
-  // The running tool, read off the main conversation's rows: a response's
-  // tool_use block starts it, the tool_result row ends it (ids; tools run in parallel).
-  on('session.append', async ($, e, next) => {
-    const result = await next(e)
-    const content = e.message.content
-    if (e.agentId !== undefined || !Array.isArray(content)) return result
-    for (const block of content as Block[]) {
-      if (block.type === 'tool_use' && typeof block.id === 'string' && typeof block.name === 'string' && block.name !== NOTIFY) {
-        const input = typeof block.input === 'object' && block.input ? (block.input as Record<string, unknown>) : {}
-        await send($, 'ToolStart', { id: block.id, tool: block.name, detail: detail(input) })
-      } else if (block.type === 'tool_result' && typeof block.tool_use_id === 'string') {
-        await send($, 'ToolEnd', { id: block.tool_use_id })
-      }
     }
     return result
   })

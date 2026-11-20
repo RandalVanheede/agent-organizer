@@ -1,5 +1,5 @@
 {
   "name": "agent-organizer",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "Reports turn, tool and attention events to the Agent Organizer app. Does nothing outside its terminals."
 }

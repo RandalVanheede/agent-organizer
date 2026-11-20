@@ -143,16 +143,8 @@ final class AppState {
     /// shortcut: a sub-agent killed without SubagentStop stays counted until
     /// the tool exits/restarts; add a timeout if that shows up in practice.
     private var activeSubagents: [Agent.ID: Set<String>] = [:]
-    /// Main-loop tools running now, oldest first (Claude Code plugin's
-    /// ToolStart/ToolEnd); several at once when Claude runs them in parallel.
-    var runningTools: [Agent.ID: [RunningTool]] = [:]
+    /// The plugin's notify tool: one toast per 30 s per agent.
     private var lastNotifyAt: [Agent.ID: TimeInterval] = [:]
-    struct RunningTool: Equatable {
-        let id: String
-        let label: String
-    }
-    /// "Bash · npm test" for the status bar; nil when no tool is running.
-    func runningToolLabel(_ agentID: Agent.ID) -> String? { runningTools[agentID]?.last?.label }
 
     init() {
         #if DEBUG
@@ -212,23 +204,12 @@ final class AppState {
             HookLog.write("event \(event.name) pane=\(event.pane) -> no agent (session=\(session ?? "nil"))")
             return
         }
-        let isToolEvent = event.name == "ToolStart" || event.name == "ToolEnd"
-        if !isToolEvent { // a line per tool call would drown the log
-            HookLog.write("event \(event.name)\(event.reason.map { "(\($0))" } ?? "") pane=\(event.pane) -> \(session) sub=\(event.subagentID ?? "-") active=\(activeSubagents[agent.id]?.count ?? 0)")
-        }
+        HookLog.write("event \(event.name)\(event.reason.map { "(\($0))" } ?? "") pane=\(event.pane) -> \(session) sub=\(event.subagentID ?? "-") active=\(activeSubagents[agent.id]?.count ?? 0)")
         lastHookAt[agent.id] = Date().timeIntervalSince1970
         if !hookAware.contains(agent.id) { hookAware.insert(agent.id) } // observed: skip no-op writes
         hooksInstalled = true
-        if event.name == "Stop" || event.name == "UserPromptSubmit" { runningTools.removeValue(forKey: agent.id) }
 
         switch event.name {
-        case "ToolStart":
-            guard let id = event.toolID, let tool = event.tool, (runningTools[agent.id]?.count ?? 0) < 32 else { break }
-            let detail = event.detail ?? ""
-            runningTools[agent.id, default: []].append(RunningTool(id: id, label: detail.isEmpty ? tool : "\(tool) · \(detail)"))
-        case "ToolEnd":
-            runningTools[agent.id]?.removeAll { $0.id == event.toolID }
-            if runningTools[agent.id]?.isEmpty == true { runningTools.removeValue(forKey: agent.id) }
         case "AONotify":
             // Claude asked (via the plugin's notify tool) to tell the user something.
             // Auto-allowed tool, so a prompt injection could spam it: one per 30 s.
@@ -243,7 +224,6 @@ final class AppState {
             // Stop hook doesn't fire for these). Esc: the user stopped it, nothing
             // to flag, and a pending prompt went with it. Errors flag like a Stop.
             turnActive.remove(agent.id)
-            runningTools.removeValue(forKey: agent.id)
             if event.reason == "aborted" {
                 clearAttention(agent.id)
                 recomputeStatuses()
@@ -586,10 +566,6 @@ final class AppState {
             } else {
                 continue
             }
-            if runningTools[agent.id] != nil, let pane = controlClient.panes[agent.tmuxSession],
-               !Self.isClaudeCommand(pane.command), !Self.isClaudeTitle(pane.title) {
-                runningTools.removeValue(forKey: agent.id) // Claude exited mid-tool: no ToolEnd will come
-            }
             let old = agentStatuses[agent.id]
             if old != new {
                 agentStatuses[agent.id] = new
@@ -623,7 +599,6 @@ final class AppState {
                 // Tool gone (back to shell / session dead): its sub-agents and flags too.
                 if new == .idle || new == .exited {
                     activeSubagents.removeValue(forKey: agent.id)
-                    runningTools.removeValue(forKey: agent.id)
                     turnActive.remove(agent.id)
                     if attention.removeValue(forKey: agent.id) != nil { updateDockBadge() }
                 }
