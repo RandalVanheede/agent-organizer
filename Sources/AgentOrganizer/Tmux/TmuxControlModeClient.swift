@@ -75,6 +75,8 @@ final class TmuxControlModeClient {
 
         // Kept open for the process lifetime: EOF on stdin = detach request.
         let stdinPipe = Pipe()
+        // Control client gone: EPIPE on the (throwing) write, not a SIGPIPE that kills the app.
+        _ = fcntl(stdinPipe.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
         stdinHandle = stdinPipe.fileHandleForWriting
         process.standardInput = stdinPipe
 

@@ -58,17 +58,23 @@ function detail(input: Record<string, unknown>): string {
   return ''
 }
 
-/** "npm test", "git status": the program plus a subcommand-looking word; arguments may hold secrets (`mysql -pS3cret`). */
+/** Tools whose second word is a subcommand, not data. */
+const SUBCOMMAND_TOOLS = /^(git|npm|pnpm|yarn|bun|npx|docker|kubectl|cargo|make|swift|brew|go|composer|ddev|drush|gh|terraform)$/
+
+/** "npm test", "git status", else the program name alone: arguments may hold secrets (`mysql -pX`, `echo hunter2`). */
 function program(command: string): string {
-  const [name = '', next = ''] = command.trim().split(/\s+/)
-  return /^[a-z][a-z0-9_-]*$/.test(next) ? `${name} ${next}` : name
+  const words = command.trim().split(/\s+/)
+  while (words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0] ?? '')) words.shift() // `API_KEY=… npm test`
+  const name = (words[0] ?? '').split('/').pop() ?? ''
+  if (!/^[A-Za-z0-9._+-]+$/.test(name)) return ''
+  const next = words[1] ?? ''
+  return SUBCOMMAND_TOOLS.test(name) && /^[a-z][a-z0-9:-]*$/.test(next) ? `${name} ${next}` : name
 }
 
-/** Host and path only: query strings carry tokens. */
+/** Host only: paths and query strings can carry tokens (webhooks, `/bot<token>/`). */
 function urlLabel(url: string): string {
   try {
-    const u = new URL(url)
-    return u.host + u.pathname
+    return new URL(url).host
   } catch {
     return ''
   }
