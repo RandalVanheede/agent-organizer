@@ -4,13 +4,13 @@
     <title>Agent Organizer</title>
     <link>https://github.com/RandalVanheede/agent-organizer</link>
     <item>
-      <title>Version 1.4.0</title>
-      <pubDate>Fri, 20 Nov 2026 12:49:17 +0000</pubDate>
-      <sparkle:version>50</sparkle:version>
-      <sparkle:shortVersionString>1.4.0</sparkle:shortVersionString>
+      <title>Version 1.4.1</title>
+      <pubDate>Fri, 20 Nov 2026 13:09:01 +0000</pubDate>
+      <sparkle:version>52</sparkle:version>
+      <sparkle:shortVersionString>1.4.1</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <sparkle:releaseNotesLink>https://github.com/RandalVanheede/agent-organizer/releases/tag/v1.4.0</sparkle:releaseNotesLink>
-      <enclosure url="https://github.com/RandalVanheede/agent-organizer/releases/download/v1.4.0/AgentOrganizer-1.4.0.dmg" sparkle:edSignature="ubYTO9u+C43UW/iU4bsV2Ui31frwBfRQNuoq/sc3RbJY5mHi2qCASEgmGQi765VzmWpuNaFZ728HBUwQa+2DBw==" length="4787333" type="application/octet-stream"/>
+      <sparkle:releaseNotesLink>https://github.com/RandalVanheede/agent-organizer/releases/tag/v1.4.1</sparkle:releaseNotesLink>
+      <enclosure url="https://github.com/RandalVanheede/agent-organizer/releases/download/v1.4.1/AgentOrganizer-1.4.1.dmg" sparkle:edSignature="XBzueBLmo5EbFOCIAtRi9F+UPNVuMziyVYjagFLo+Y1/ECIU2Og2NxhGv1GtykmZ5G8Ak5ukJas7QixQdULVDg==" length="4779662" type="application/octet-stream"/>
     </item>
   </channel>
 </rss>
