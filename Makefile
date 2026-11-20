@@ -48,6 +48,7 @@ bundle: build
 	cp Resources/tmux.conf "$(APP_DIR)/Contents/Resources/tmux.conf"
 	cp Resources/ao-hook.sh "$(APP_DIR)/Contents/Resources/ao-hook.sh"
 	cp -R Resources/claude-plugin "$(APP_DIR)/Contents/Resources/claude-plugin"
+	cp -R Resources/pi-extension "$(APP_DIR)/Contents/Resources/pi-extension"
 	cp -R Resources/fonts "$(APP_DIR)/Contents/Resources/fonts"
 	@if [ -x Resources/bin/tmux ]; then \
 		mkdir -p "$(APP_DIR)/Contents/Resources/bin"; \

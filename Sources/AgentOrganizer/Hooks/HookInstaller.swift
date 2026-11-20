@@ -41,6 +41,16 @@ enum HookInstaller {
         Bundle.main.url(forResource: "claude-plugin", withExtension: nil)
     }
 
+    /// Pi (pi.dev) auto-loads extensions from here; only used when Pi is set up
+    /// (`~/.pi/agent` exists), never created for people who don't use it.
+    static var piExtensionURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".pi/agent/extensions/agent-organizer.ts")
+    }
+
+    static var bundledPiExtension: URL? {
+        Bundle.main.url(forResource: "agent-organizer", withExtension: "ts", subdirectory: "pi-extension")
+    }
+
     private static var installedPluginsURL: URL {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/plugins/installed_plugins.json")
     }
@@ -85,6 +95,7 @@ enum HookInstaller {
             try removeSettingsHooks()
             try? FileManager.default.removeItem(at: pluginDirectory)
             try? FileManager.default.removeItem(at: scriptURL)
+            if isOurPiExtension() { try? FileManager.default.removeItem(at: piExtensionURL) }
         }
     }
 
@@ -104,6 +115,7 @@ enum HookInstaller {
 
     private static func installNow() async throws -> Mode {
         let pluginChanged = try copyFiles()
+        installPiExtension()
         try installSettingsHooks()
         switch await claudeSupportsMods() {
         case true?:
@@ -127,6 +139,32 @@ enum HookInstaller {
     }
 
     // MARK: - Plugin
+
+    /// The same events for Pi agents, from its extension API (no hooks there).
+    private static func installPiExtension() {
+        let fm = FileManager.default
+        let agentDir = piExtensionURL.deletingLastPathComponent().deletingLastPathComponent()
+        guard fm.fileExists(atPath: agentDir.path), let bundled = bundledPiExtension,
+              let data = try? Data(contentsOf: bundled), (try? Data(contentsOf: piExtensionURL)) != data,
+              isOurPiExtension() else { return }
+        do {
+            try fm.createDirectory(at: piExtensionURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: piExtensionURL, options: .atomic)
+            HookLog.write("Pi extension installed")
+        } catch {
+            HookLog.write("Pi extension install failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Absent, or a copy we wrote (marker line): a user's own same-named file is left alone.
+    private static func isOurPiExtension() -> Bool {
+        guard let text = try? String(contentsOf: piExtensionURL, encoding: .utf8) else {
+            return !FileManager.default.fileExists(atPath: piExtensionURL.path)
+        }
+        return text.contains(piMarker)
+    }
+
+    static let piMarker = "Agent Organizer extension for Pi"
 
     /// Copies the script and the plugin folder; true when the plugin changed.
     private static func copyFiles() throws -> Bool {

@@ -227,6 +227,11 @@ enum RemoteSession {
         }
         script += "v=\(version)\n"
         script += "echo \(Data((hookScript + "\n").utf8).base64EncodedString()) | base64 -d > \"$d/bin/ao-hook\" && chmod 755 \"$d/bin/ao-hook\"\n"
+        // Pi agents: its extension, only where Pi is set up; before the claude checks, which may exit.
+        if let pi = HookInstaller.bundledPiExtension.flatMap({ try? Data(contentsOf: $0) }) {
+            // Atomic (tmp + mv): Pi loads it in every session. Never replaces a user's own same-named file.
+            script += "x=\"$HOME/.pi/agent/extensions/agent-organizer.ts\"; if [ -d \"$HOME/.pi/agent\" ] && { [ ! -e \"$x\" ] || grep -q '\(HookInstaller.piMarker)' \"$x\"; }; then mkdir -p \"$HOME/.pi/agent/extensions\" && echo \(pi.base64EncodedString()) | base64 -d > \"$x.tmp\" && mv -f \"$x.tmp\" \"$x\" && echo 'pi extension;'; fi\n"
+        }
         script += #"""
         \#(findClaude)
         [ -x "$c" ] || { echo "no claude"; exit 0; }
@@ -256,6 +261,7 @@ enum RemoteSession {
         d="$HOME/.cache/agent-organizer"
         \(findClaude)
         if [ -x "$c" ]; then "$c" plugin uninstall agent-organizer@agent-organizer </dev/null >/dev/null 2>&1; "$c" plugin marketplace remove agent-organizer </dev/null >/dev/null 2>&1; fi
+        x="$HOME/.pi/agent/extensions/agent-organizer.ts"; grep -q '\(HookInstaller.piMarker)' "$x" 2>/dev/null && rm -f "$x"
         rm -rf "$d/claude-plugin" "$d/bin/ao-hook" "$d/plugin-installed"; echo removed
         """
         runRemote(host: host, script: script, label: "Claude Code integration removal")

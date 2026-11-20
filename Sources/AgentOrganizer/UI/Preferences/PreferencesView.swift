@@ -74,7 +74,7 @@ private struct NotificationsPreferencesView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(hookStatus)
-                        Text("Adds hooks to ~/.claude/settings.json (a backup is kept): agents then flag the tab, badge the Dock, and post a notification when they need you. With a Claude Code that supports mods it also installs the agent-organizer plugin, which reports Esc and errors right away, shows the running tool in the status bar, works in remote folders (key-based ssh), and gives Claude a notify tool. Only fires for claude sessions started from this app; restart running ones.")
+                        Text("Adds hooks to ~/.claude/settings.json (a backup is kept): agents then flag the tab, badge the Dock, and post a notification when they need you. With a Claude Code that supports mods it also installs the agent-organizer plugin, which reports Esc and errors right away, shows the running tool in the status bar, works in remote folders (key-based ssh), and gives Claude a notify tool. Pi agents get the same through an extension in ~/.pi/agent/extensions/ (only where Pi is set up). Only fires for claude sessions started from this app; restart running ones.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
