@@ -9,10 +9,15 @@ struct SidebarView: View {
 
     private var visibleFolders: [Folder] { appState.sidebarFolders }
 
-    /// Folders grouped by machine, this Mac first, then remote hosts A‑Z.
+    /// Folders grouped by machine; `sidebarFolders` already has the order.
     private var hostGroups: [(host: String?, folders: [Folder])] {
-        let grouped = Dictionary(grouping: visibleFolders, by: \.host)
-        return grouped.keys.sorted { ($0 ?? "") < ($1 ?? "") }.map { ($0, grouped[$0]!) }
+        var groups: [(host: String?, folders: [Folder])] = []
+        for folder in visibleFolders {
+            // Not `groups.last?.host`: on an empty list that's nil, equal to a local folder's host.
+            if let last = groups.indices.last, groups[last].host == folder.host { groups[last].folders.append(folder) }
+            else { groups.append((folder.host, [folder])) }
+        }
+        return groups
     }
 
     var body: some View {

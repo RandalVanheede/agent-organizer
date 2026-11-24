@@ -388,11 +388,17 @@ final class AppState {
 
     /// Folders as the sidebar lists them (respects the "open agents only"
     /// toggle). The selected folder always stays listed, so one picked via
-    /// Quick Open shows where you are even without agents.
+    /// Quick Open shows where you are even without agents. Ordered as drawn:
+    /// this Mac first, then remote hosts A‑Z, by name within a host — so
+    /// ⌘↑/⌘↓ never jumps between machines.
     var sidebarFolders: [Folder] {
-        guard store.sidebarOpenAgentsOnly else { return store.sortedFolders() }
-        let withAgents = Set(store.agents.map(\.folderID))
-        return store.sortedFolders().filter { withAgents.contains($0.id) || $0.id == selectedFolderID }
+        var folders = store.sortedFolders()
+        if store.sidebarOpenAgentsOnly {
+            let withAgents = Set(store.agents.map(\.folderID))
+            folders = folders.filter { withAgents.contains($0.id) || $0.id == selectedFolderID }
+        }
+        let grouped = Dictionary(grouping: folders, by: \.host)
+        return grouped.keys.sorted { ($0 ?? "") < ($1 ?? "") }.flatMap { grouped[$0]! }
     }
 
     /// Agents blocked on you (permission prompt / question), oldest first.
