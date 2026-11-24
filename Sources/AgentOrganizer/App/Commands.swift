@@ -87,6 +87,15 @@ struct AppCommands: Commands {
 
             Divider()
 
+            ForEach(1...9, id: \.self) { n in
+                Button(appState.store.sidebarShowAgents ? "Sidebar Agent \(n)" : "Sidebar Folder \(n)") {
+                    appState.selectSidebarItemAtIndex(n - 1)
+                }
+                .keyboardShortcut(KeyEquivalent(Character("\(n)")), modifiers: [.control])
+            }
+
+            Divider()
+
             // Kills the current agent (default ⌘W). The key itself is handled
             // by AppDelegate's event monitor; this shortcut is for the menu display.
             Button("Kill Agent") {

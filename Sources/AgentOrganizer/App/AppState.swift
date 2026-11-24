@@ -376,6 +376,17 @@ final class AppState {
         selectAgent(agents[index])
     }
 
+    /// ⌃1–⌃9 — jump to the Nth sidebar item: agents when the sidebar lists them, else folders.
+    func selectSidebarItemAtIndex(_ index: Int) {
+        let folders = sidebarFolders
+        if store.sidebarShowAgents {
+            let agents = folders.flatMap { store.agents(in: $0.id) }
+            if index < agents.count { selectAgent(agents[index]) }
+        } else if index < folders.count {
+            selectFolder(folders[index].id)
+        }
+    }
+
     /// ⇧⌘] / ⇧⌘[ — cycle tabs within the selected folder.
     func selectAdjacentAgent(by offset: Int) {
         guard let folder = selectedFolder else { return }
